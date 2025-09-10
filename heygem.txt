@@ -1,0 +1,91 @@
+
+首先把指定的音频标准化wav
+ffmpeg -y -i ref.wav  -af "loudnorm=I=-16:TP=-1.5:LRA=11" -ar 16000 -ac 1 -c:a pcm_s16le ref_norm.wav
+
+(可选)
+# 去掉明显的头尾静音，再转成目标规格
+ffmpeg -y -i in.mp3 \
+  -af "silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:\
+stop_periods=1:stop_duration=0:stop_threshold=-50dB" \
+  -ac 1 -ar 16000 -acodec pcm_s16le ref_trim.wav
+
+（可选）响度归一化
+ffmpeg -y -i ref_trim.wav \
+  -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
+  -ar 16000 -ac 1 -c:a pcm_s16le ref_norm.wav
+
+把视频静音
+ffmpeg -y -i .\zhuqi.mp4 -an -c:v copy silent.mp4
+
+把对应的音频放到指定目录
+sudo cp "/mnt/c/heygem/ref_norm.wav"   /root/heygem_data/voice/data/
+把对应的视频放到指定目录
+sudo cp "/mnt/c/heygem/silent.mp4"  /root/heygem_data/face2face/
+
+
+我是在wsl2 里面运行的codex，在本地使用docker-compose-linux.yml启动的服务，但是我发现里面对于视频静音、音频处理等，需要使用命令行处理完了，再放到指定▌目录，我把整个过程记录下来了，我想你使用golang+gin、vue3+tailwindCSS给我实现这些能力，我会提供给你我整个启动的操作步骤
+
+语音预处理接口
+curl -s http://127.0.0.1:18180/v1/preprocess_and_tran \
+  -H "Content-Type: application/json" \
+  -d '{
+    "format": "wav",
+    "reference_audio": "ref_norm.wav",
+    "lang": "zh"
+  }'
+
+{"code":0,"msg":"success","reference_audio_text":"风红热肿痛都得沉默，一贴到位，20 年的关节痛。风红热肿痛都得沉默，它真 的不是说吹啊，为什么满意了就不敢让你再贴了呢？它的能量有多强？我来告诉你，平时关节痛风反反复复红热肿痛，连带着这个手指疼，脚趾疼。从手。","asr_format_audio_url":"/code/sessions/20250909/b1d2dad7201445b5a5721332cdc8de11/format_denoise_ref_norm_part0.wav"}
+
+
+
+TTS 合成
+Notice:
+speaker 可以随便起（最好唯一），比如 UUID。
+reference_audio 和 reference_text 必须用上一步返回的值。
+--output 把生成的 wav 保存到你宿主机的 TTS 目录。
+
+
+curl -s http://127.0.0.1:18180/v1/invoke \
+  -H "Content-Type: application/json" \
+  -d '{
+    "speaker": "demo001",
+    "text": "喝了它，还是一起身就头晕眼花的，喝了它，还是手脚麻木，不能动弹的，喝了它，高血压问题不见改善，还是反反复复的，不管是高血压三年、五年、八年都可以用，就是这个调养结合的金七调压口服液，获批蓝帽专利认证，萃取云南三七全株三七，提取其中控压成分三七皂苷精华，浓缩成这一瓶调压小金瓶，皂苷精华深入血管内部，调节血液粘稠，养护血管，增强血液动力，高血压多年一直反反复复，稍不注意吃点东西就血压飙升，那这个调压养压的专利，真的要抓紧用起来了。",
+    "format": "wav",
+    "topP": 0.7,
+    "max_new_tokens": 1024,
+    "chunk_length": 100,
+    "repetition_penalty": 1.2,
+    "temperature": 0.7,
+    "need_asr": false,
+    "streaming": false,
+    "is_fixed_seed": 0,
+    "is_norm": 0,
+    "reference_audio": "/code/sessions/20250909/b1d2dad7201445b5a5721332cdc8de11/format_denoise_ref_norm_part0.wav",
+    "reference_text": "风红热肿痛都得沉默，一贴到位，20 年的关节痛。风红热肿痛都得沉默，它真 的不是说吹啊，为什么满意了就不敢让你再贴了呢？它的能量有多强？我来告诉你，平时关节痛风反反复复红热肿痛，连带着这个手指疼，脚趾疼。从手。"
+  }' \
+  --output /root/heygem_data/voice/data/demo001.wav
+
+
+然后手动拷贝到视频目录：
+cp /root/heygem_data/voice/data/demo001.wav /root/heygem_data/face2face/
+
+
+视频合成
+curl -s http://127.0.0.1:8383/easy/submit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audio_url": "/code/data/demo001.wav",
+    "video_url": "/code/data/silent.mp4",
+    "code": "task001",
+    "chaofen": 0,
+    "watermark_switch": 0,
+    "pn": 1
+  }'
+
+等待完成
+docker exec -it heygem-gen-video bash
+root@081d6f3e9230:/# find /code/data -name "task001-r.mp4"
+/code/data/temp/task001-r.mp4   这里就是视频地址
+
+ docker cp heygem-gen-video:/code/data/temp/task001-r.mp4 /root/heygem_data/face2face/result/
+cp /root/heygem_data/face2face/result/task001-r.mp4 /mnt/c/company/  这样就copy到company目录了

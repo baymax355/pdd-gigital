@@ -1,0 +1,28 @@
+version: '3.8'
+services:
+  heygem-helper:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: heygem-helper:latest
+    container_name: heygem-helper
+    environment:
+      - APP_PORT=8090
+      - STATIC_DIR=/app/client-dist
+      - HOST_VOICE_DIR=/root/heygem_data/voice/data
+      - HOST_VIDEO_DIR=/root/heygem_data/face2face
+      - HOST_RESULT_DIR=/root/heygem_data/face2face/result
+      - WIN_COMPANY_DIR=/mnt/c/company
+      - TTS_BASE_URL=http://host.docker.internal:18180
+      - VIDEO_BASE_URL=http://host.docker.internal:8383
+      - GEN_VIDEO_CONTAINER=heygem-gen-video
+      - GEN_VIDEO_CONTAINER_DATA_ROOT=/code/data
+    volumes:
+      - /root/heygem_data/voice/data:/root/heygem_data/voice/data
+      - /root/heygem_data/face2face:/root/heygem_data/face2face
+      - /root/heygem_data/face2face/result:/root/heygem_data/face2face/result
+      - /mnt/c/company:/mnt/c/company
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./client/dist:/app/client-dist:ro
+    ports:
+      - "8090:8090"
