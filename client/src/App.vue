@@ -56,6 +56,9 @@
           </div>
           <div v-if="autoStatus.status === 'completed'" class="text-green-600 font-medium">
             ✅ 处理完成！视频文件：{{ autoStatus.result_video }}
+            <div class="text-sm text-gray-600 mt-1">
+              总耗时：{{ formatDuration(autoStatus.total_duration) }}
+            </div>
             <div class="mt-2">
               <a :href="`/api/download/video/${autoStatus.result_video}`" 
                  class="inline-block bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors">
@@ -283,6 +286,23 @@ async function pollAutoStatus(){
   } catch (error) {
     console.error('轮询状态失败:', error)
     setTimeout(pollAutoStatus, 5000) // 出错时5秒后重试
+  }
+}
+
+// 格式化耗时显示
+function formatDuration(seconds) {
+  if (!seconds) return '计算中...'
+  
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  
+  if (hours > 0) {
+    return `${hours}小时${minutes}分钟${secs}秒`
+  } else if (minutes > 0) {
+    return `${minutes}分钟${secs}秒`
+  } else {
+    return `${secs}秒`
   }
 }
 
