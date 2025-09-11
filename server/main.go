@@ -380,6 +380,7 @@ func handleAutoProcess(c *gin.Context) {
         Status:      "processing",
         CurrentStep: "上传文件",
         Progress:    0,
+        StartTime:   time.Now().Unix(),
     }
     taskStatusMap[taskID] = status
     
@@ -673,6 +674,9 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
                 status.Progress = 100
                 status.ResultVideo = fmt.Sprintf("%s-r.mp4", taskCode)
                 status.ResultPath = hostOut
+                status.EndTime = time.Now().Unix()
+                status.TotalDuration = status.EndTime - status.StartTime
+                log.Printf("任务 %s 完成，总耗时: %d 秒 (%.1f 分钟)", taskID, status.TotalDuration, float64(status.TotalDuration)/60)
                 return
             }
             
@@ -684,6 +688,9 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
         case <-timeout:
             status.Status = "failed"
             status.Error = "视频合成超时"
+            status.EndTime = time.Now().Unix()
+            status.TotalDuration = status.EndTime - status.StartTime
+            log.Printf("任务 %s 超时失败，总耗时: %d 秒 (%.1f 分钟)", taskID, status.TotalDuration, float64(status.TotalDuration)/60)
             return
         }
     }

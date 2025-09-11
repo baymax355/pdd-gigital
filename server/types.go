@@ -55,5 +55,8 @@ type AutoProcessStatus struct {
     Error           string `json:"error,omitempty"`
     ResultVideo     string `json:"result_video,omitempty"`
     ResultPath      string `json:"result_path,omitempty"`
+    StartTime       int64  `json:"start_time"`       // 开始时间戳
+    EndTime         int64  `json:"end_time,omitempty"` // 结束时间戳
+    TotalDuration   int64  `json:"total_duration,omitempty"` // 总耗时(秒)
 }
 
