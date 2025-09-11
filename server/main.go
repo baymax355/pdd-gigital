@@ -634,7 +634,10 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
             stdout, stderr, err := run(checkCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "bash", "-lc", fmt.Sprintf("if [ -f '%s' ]; then echo FOUND; else echo MISSING; fi", inside))
             cancel()
             
-            log.Printf("视频合成检查 #%d: 文件路径=%s, 错误=%v, stdout=%s, stderr=%s", checkCount, inside, err, stdout, stderr)
+            // 静默检查，只在出错时记录日志
+            if err != nil {
+                log.Printf("视频合成检查 #%d 出错: 文件路径=%s, 错误=%v, stdout=%s, stderr=%s", checkCount, inside, err, stdout, stderr)
+            }
             
             // 检查stdout和stderr中是否包含FOUND
             if err == nil && (strings.Contains(stdout, "FOUND") || strings.Contains(stderr, "FOUND")) {
@@ -642,7 +645,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
                 status.CurrentStep = "下载最终视频"
                 status.Progress = 95
                 
-                // 拷贝到结果目录
+                // 拷贝到结果目录 - 带重试和完整性检查
                 hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", taskCode))
                 if err := os.MkdirAll(filepath.Dir(hostOut), 0o755); err != nil {
                     status.Status = "failed"
@@ -650,21 +653,130 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
                     return
                 }
                 
-                copyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-                _, cpErr, err := run(copyCtx, "docker", "cp", fmt.Sprintf("%s:%s", cfg.GenVideoContainer, inside), hostOut)
-                cancel()
+                // 获取容器中文件的大小 - 等待文件稳定
+                log.Printf("开始检查容器文件: %s", inside)
                 
-                if err != nil {
+                // 等待文件大小稳定（最多等待30秒）
+                var expectedSize string
+                for waitAttempt := 1; waitAttempt <= 6; waitAttempt++ {
+                    sizeCmd := fmt.Sprintf("docker exec -i %s stat -c %%s %s", cfg.GenVideoContainer, inside)
+                    log.Printf("执行命令: %s", sizeCmd)
+                    
+                    sizeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+                    sizeOut, _, err := run(sizeCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "stat", "-c", "%s", inside)
+                    cancel()
+                    if err != nil {
+                        log.Printf("无法获取容器文件大小 (第%d次): %v", waitAttempt, err)
+                        if waitAttempt < 6 {
+                            time.Sleep(5 * time.Second)
+                            continue
+                        }
+                    } else {
+                        currentSize := strings.TrimSpace(sizeOut)
+                        log.Printf("容器文件大小检查 #%d: %s bytes", waitAttempt, currentSize)
+                        
+                        if waitAttempt == 1 {
+                            expectedSize = currentSize
+                        } else if currentSize == expectedSize {
+                            log.Printf("文件大小已稳定: %s bytes", expectedSize)
+                            break
+                        } else {
+                            log.Printf("文件大小仍在变化: %s -> %s", expectedSize, currentSize)
+                            expectedSize = currentSize
+                        }
+                        
+                        if waitAttempt < 6 {
+                            time.Sleep(5 * time.Second)
+                        }
+                    }
+                }
+                
+                // 重试复制，最多3次
+                var copySuccess bool
+                for attempt := 1; attempt <= 3; attempt++ {
+                    log.Printf("=== 复制尝试 #%d ===", attempt)
+                    log.Printf("源文件: %s:%s", cfg.GenVideoContainer, inside)
+                    log.Printf("目标文件: %s", hostOut)
+                    log.Printf("期望大小: %s bytes", expectedSize)
+                    
+                    copyCmd := fmt.Sprintf("docker cp %s:%s %s", cfg.GenVideoContainer, inside, hostOut)
+                    log.Printf("执行命令: %s", copyCmd)
+                    
+                    copyCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+                    startTime := time.Now()
+                    _, cpErr, err := run(copyCtx, "docker", "cp", fmt.Sprintf("%s:%s", cfg.GenVideoContainer, inside), hostOut)
+                    copyDuration := time.Since(startTime)
+                    cancel()
+                    
+                    log.Printf("复制耗时: %v", copyDuration)
+                    
+                    if err != nil {
+                        log.Printf("第%d次复制失败: %v | %s", attempt, err, cpErr)
+                        if attempt < 3 {
+                            log.Printf("等待5秒后重试...")
+                            time.Sleep(5 * time.Second)
+                            continue
+                        }
+                    } else {
+                        log.Printf("复制命令执行成功，开始验证文件...")
+                        
+                        // 验证文件大小
+                        if expectedSize != "" {
+                            if stat, err := os.Stat(hostOut); err == nil {
+                                actualSize := fmt.Sprintf("%d", stat.Size())
+                                log.Printf("文件大小验证: 期望 %s bytes, 实际 %s bytes", expectedSize, actualSize)
+                                
+                                if actualSize == expectedSize {
+                                    log.Printf("✅ 文件复制成功，大小完全匹配!")
+                                    copySuccess = true
+                                    break
+                                } else {
+                                    log.Printf("❌ 文件大小不匹配，需要重试")
+                                    if attempt < 3 {
+                                        log.Printf("等待5秒后重试...")
+                                        time.Sleep(5 * time.Second)
+                                        continue
+                                    }
+                                }
+                            } else {
+                                log.Printf("❌ 无法读取目标文件: %v", err)
+                                if attempt < 3 {
+                                    time.Sleep(5 * time.Second)
+                                    continue
+                                }
+                            }
+                        } else {
+                            // 无法验证大小，假设成功
+                            log.Printf("⚠️ 无法验证文件大小，假设复制成功")
+                            copySuccess = true
+                            break
+                        }
+                    }
+                }
+                
+                if !copySuccess {
                     status.Status = "failed"
-                    status.Error = fmt.Sprintf("视频拷贝失败: %v | %s", err, cpErr)
+                    status.Error = "视频拷贝到结果目录失败，已重试3次"
                     return
                 }
                 
-                // 可选拷贝到Windows目录
+                // 可选拷贝到Windows目录 - 直接从容器复制，避免使用被截断的文件
                 if req.CopyToCompany {
                     companyOut := filepath.Join(cfg.WindowsCompanyDir, fmt.Sprintf("%s-r.mp4", taskCode))
-                    if err := copyFile(hostOut, companyOut); err != nil {
-                        log.Printf("拷贝到Windows目录失败: %v", err)
+                    companyCmd := fmt.Sprintf("docker cp %s:%s %s", cfg.GenVideoContainer, inside, companyOut)
+                    log.Printf("执行Windows拷贝命令: %s", companyCmd)
+                    
+                    companyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+                    startTime := time.Now()
+                    _, cpErr, err := run(companyCtx, "docker", "cp", fmt.Sprintf("%s:%s", cfg.GenVideoContainer, inside), companyOut)
+                    copyDuration := time.Since(startTime)
+                    cancel()
+                    
+                    log.Printf("Windows拷贝耗时: %v", copyDuration)
+                    if err != nil {
+                        log.Printf("拷贝到Windows目录失败: %v | %s", err, cpErr)
+                    } else {
+                        log.Printf("成功拷贝到Windows目录: %s", companyOut)
                     }
                 }
                 

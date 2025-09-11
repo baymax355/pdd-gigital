@@ -3,6 +3,36 @@ networks:
     driver: bridge
 
 services:
+  heygem-web:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: heygem-web
+    restart: always
+    ports:
+      - '8090:8090'
+    volumes:
+      - ~/heygem_data/voice/data:/root/heygem_data/voice/data
+      - ~/heygem_data/face2face:/root/heygem_data/face2face
+      - ~/heygem_data/face2face/result:/root/heygem_data/face2face/result
+      - /mnt/c/company:/mnt/c/company
+      - ./client/dist:/root/client/dist
+    environment:
+      - APP_PORT=8090
+      - HOST_VOICE_DIR=/root/heygem_data/voice/data
+      - HOST_VIDEO_DIR=/root/heygem_data/face2face
+      - HOST_RESULT_DIR=/root/heygem_data/face2face/result
+      - WIN_COMPANY_DIR=/mnt/c/company
+      - TTS_BASE_URL=http://heygem-tts:8080
+      - VIDEO_BASE_URL=http://heygem-gen-video:8383
+      - GEN_VIDEO_CONTAINER=heygem-gen-video
+      - GEN_VIDEO_CONTAINER_DATA_ROOT=/code/data
+      - STATIC_DIR=/root/client/dist
+    depends_on:
+      - heygem-tts
+      - heygem-gen-video
+    networks:
+      - ai_network
   heygem-tts:
     image: guiji2025/fish-speech-ziming
     container_name: heygem-tts
