@@ -26,18 +26,6 @@ func main() {
 
     r := gin.Default()
 
-    // 静态资源（如构建后的前端）
-    staticCandidates := []string{}
-    if cfg.StaticDir != "" { staticCandidates = append(staticCandidates, cfg.StaticDir) }
-    staticCandidates = append(staticCandidates, "./client/dist", "../client/dist")
-    for _, p := range staticCandidates {
-        if st, err := os.Stat(p); err == nil && st.IsDir() {
-            r.Static("/", p)
-            log.Printf("静态资源目录: %s", p)
-            break
-        }
-    }
-
     // 直通封装：与 heygem.txt 相同路径，统一从本服务调用
     r.POST("/v1/preprocess_and_tran", handleProxyPreprocess)
     r.POST("/v1/invoke", handleProxyInvoke)
@@ -56,6 +44,28 @@ func main() {
 
         api.POST("/video/submit", handleVideoSubmit)
         api.GET("/video/result", handleVideoResult)
+        
+        api.POST("/auto/process", handleAutoProcess)
+        api.GET("/auto/status/:taskId", handleAutoStatus)
+        
+        api.GET("/download/video/:filename", handleDownloadVideo)
+    }
+
+    // 静态资源（如构建后的前端）- 使用更精确的路由避免冲突
+    staticCandidates := []string{}
+    if cfg.StaticDir != "" { staticCandidates = append(staticCandidates, cfg.StaticDir) }
+    staticCandidates = append(staticCandidates, "./client/dist", "../client/dist")
+    for _, p := range staticCandidates {
+        if st, err := os.Stat(p); err == nil && st.IsDir() {
+            // 使用 /static/*filepath 而不是 /*filepath 避免与API路由冲突
+            r.Static("/static", p)
+            // 添加根路径的静态文件服务，但排除API路径
+            r.GET("/", func(c *gin.Context) {
+                c.File(filepath.Join(p, "index.html"))
+            })
+            log.Printf("静态资源目录: %s", p)
+            break
+        }
     }
 
     addr := fmt.Sprintf(":%s", cfg.Port)
@@ -139,36 +149,22 @@ func handleUploadAudio(c *gin.Context) {
         c.JSON(http.StatusBadRequest, gin.H{"error": "缺少音频文件 file"})
         return
     }
-    trim := strings.ToLower(c.PostForm("trim_silence")) == "true"
     outName := c.PostForm("out_name")
     if outName == "" { outName = "ref.wav" }
     // 保存原始音频
     srcPath, err := saveMultipartFile(file, filepath.Join(cfg.WorkDir, "upload"), outName)
     if err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }
 
-    // 处理: 可选去静音 -> 响度归一 + 16k 单声道 PCM
+    // 直接转换音频格式: MP3/其他格式 -> WAV (16kHz单声道)
     work := filepath.Join(cfg.WorkDir, "audio")
     os.MkdirAll(work, 0o755)
-    trimmed := filepath.Join(work, "ref_trim.wav")
     norm := filepath.Join(work, "ref_norm.wav")
 
-    if trim {
-        // ffmpeg silenceremove
-        _, stderr, err := run(ctx, "ffmpeg", "-y", "-i", srcPath,
-            "-af", "silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:stop_periods=1:stop_duration=0:stop_threshold=-50dB",
-            "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", trimmed,
-        )
-        if err != nil { c.JSON(500, gin.H{"error": fmt.Sprintf("ffmpeg trim 失败: %v | %s", err, stderr)}); return }
-    } else {
-        trimmed = srcPath
-    }
-
-    // loudnorm
-    _, stderr, err := run(ctx, "ffmpeg", "-y", "-i", trimmed,
-        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+    // 简单的格式转换，不做任何音频处理
+    _, stderr, err := run(ctx, "ffmpeg", "-y", "-i", srcPath,
         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", norm,
     )
-    if err != nil { c.JSON(500, gin.H{"error": fmt.Sprintf("ffmpeg loudnorm 失败: %v | %s", err, stderr)}); return }
+    if err != nil { c.JSON(500, gin.H{"error": fmt.Sprintf("音频格式转换失败: %v | %s", err, stderr)}); return }
 
     // 拷贝到 voice/data 目录
     dst := filepath.Join(cfg.HostVoiceDir, "ref_norm.wav")
@@ -176,8 +172,7 @@ func handleUploadAudio(c *gin.Context) {
 
     c.JSON(200, gin.H{
         "src": srcPath,
-        "trimmed": trimmed,
-        "normalized": norm,
+        "converted": norm,
         "copied_to": dst,
         "reference_audio": "ref_norm.wav",
     })
@@ -345,4 +340,391 @@ func handleVideoResult(c *gin.Context) {
     }
 
     c.JSON(200, gin.H{"result": hostOut, "copied_to_company": companyOut})
+}
+
+// 全局任务状态存储
+var taskStatusMap = make(map[string]*AutoProcessStatus)
+
+// /api/auto/process: 全自动化处理接口
+func handleAutoProcess(c *gin.Context) {
+    ctx := c.Request.Context()
+    
+    // 获取上传的文件
+    audioFile, err := c.FormFile("audio")
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "缺少音频文件 audio"})
+        return
+    }
+    
+    videoFile, err := c.FormFile("video")
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "缺少视频文件 video"})
+        return
+    }
+    
+    // 解析请求参数
+    req := AutoProcessReq{
+        Speaker:       c.PostForm("speaker"),
+        Text:          c.PostForm("text"),
+        CopyToCompany: c.PostForm("copy_to_company") == "true",
+    }
+    
+    log.Printf("解析的请求参数: Speaker=%s, Text=%s, CopyToCompany=%v", req.Speaker, req.Text, req.CopyToCompany)
+    
+    // 生成任务ID
+    taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
+    
+    // 初始化任务状态
+    status := &AutoProcessStatus{
+        TaskID:      taskID,
+        Status:      "processing",
+        CurrentStep: "上传文件",
+        Progress:    0,
+    }
+    taskStatusMap[taskID] = status
+    
+    // 立即保存文件到磁盘，避免multipart文件被清理
+    log.Printf("开始保存音频文件: %s", audioFile.Filename)
+    audioPath, err := saveMultipartFile(audioFile, filepath.Join(cfg.WorkDir, "upload"), "ref.wav")
+    if err != nil {
+        log.Printf("音频保存失败: %v", err)
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("音频上传失败: %v", err)
+        c.JSON(500, gin.H{"error": status.Error})
+        return
+    }
+    log.Printf("音频文件保存成功: %s", audioPath)
+    
+    log.Printf("开始保存视频文件: %s", videoFile.Filename)
+    videoPath, err := saveMultipartFile(videoFile, filepath.Join(cfg.WorkDir, "upload"), "video.mp4")
+    if err != nil {
+        log.Printf("视频保存失败: %v", err)
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("视频上传失败: %v", err)
+        c.JSON(500, gin.H{"error": status.Error})
+        return
+    }
+    log.Printf("视频文件保存成功: %s", videoPath)
+    
+    // 异步处理
+    go processAutomatically(ctx, taskID, audioPath, videoPath, req)
+    
+    c.JSON(200, gin.H{"task_id": taskID, "status": "started"})
+}
+
+// 异步自动化处理函数
+func processAutomatically(ctx context.Context, taskID string, audioPath, videoPath string, req AutoProcessReq) {
+    status := taskStatusMap[taskID]
+    defer func() {
+        if r := recover(); r != nil {
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("处理异常: %v", r)
+            status.Progress = 0
+        }
+    }()
+    
+    // 创建新的上下文，避免HTTP请求上下文被取消
+    processCtx := context.Background()
+    
+    // 步骤1: 处理音频 (10%)
+    status.CurrentStep = "处理音频文件"
+    status.Progress = 10
+    
+    // 直接转换音频格式: MP3/其他格式 -> WAV (16kHz单声道)
+    work := filepath.Join(cfg.WorkDir, "audio")
+    os.MkdirAll(work, 0o755)
+    norm := filepath.Join(work, "ref_norm.wav")
+    
+    // 简单的格式转换，不做任何音频处理
+    _, stderr, err := run(processCtx, "ffmpeg", "-y", "-i", audioPath,
+        "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", norm,
+    )
+    if err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("音频格式转换失败: %v | %s", err, stderr)
+        return
+    }
+    
+    // 拷贝到 voice/data 目录
+    dst := filepath.Join(cfg.HostVoiceDir, "ref_norm.wav")
+    if err := copyFile(norm, dst); err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("音频拷贝失败: %v", err)
+        return
+    }
+    
+    // 步骤2: 处理视频 (20%)
+    status.CurrentStep = "处理视频文件"
+    status.Progress = 20
+    
+    // 视频静音处理
+    silentPath := filepath.Join(cfg.WorkDir, "video", "silent.mp4")
+    os.MkdirAll(filepath.Dir(silentPath), 0o755)
+    _, stderr, err = run(processCtx, "ffmpeg", "-y", "-i", videoPath, "-an", "-c:v", "copy", silentPath)
+    if err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("视频静音失败: %v | %s", err, stderr)
+        return
+    }
+    
+    // 拷贝到 face2face 目录
+    dstVideo := filepath.Join(cfg.HostVideoDir, "silent.mp4")
+    if err := copyFile(silentPath, dstVideo); err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("视频拷贝失败: %v", err)
+        return
+    }
+    
+    // 步骤3: TTS预处理 (30%)
+    status.CurrentStep = "TTS预处理"
+    status.Progress = 30
+    
+    preprocessReq := PreprocessReq{
+        Format:         "wav",
+        ReferenceAudio: "ref_norm.wav",
+        Lang:           "zh",
+    }
+    
+    body, _ := json.Marshal(preprocessReq)
+    url := fmt.Sprintf("%s/v1/preprocess_and_tran", cfg.TTSBaseURL)
+    resp, err := httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
+    if err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS预处理失败: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != 200 {
+        b, _ := io.ReadAll(resp.Body)
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS预处理失败: %s", string(b))
+        return
+    }
+    
+    var preResp PreprocessResp
+    if err := json.NewDecoder(resp.Body).Decode(&preResp); err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS预处理解析失败: %v", err)
+        return
+    }
+    
+    log.Printf("TTS预处理响应: ReferenceAudio=%s, ReferenceText=%s", preResp.ASRFormatAudioURL, preResp.ReferenceAudioText)
+    
+    // 步骤4: TTS合成 (50%)
+    status.CurrentStep = "TTS语音合成"
+    status.Progress = 50
+    
+    if req.Speaker == "" { req.Speaker = "demo001" }
+    
+    // 使用map构建请求，避免结构体问题
+    ttsReq := map[string]interface{}{
+        "speaker":            req.Speaker,
+        "text":               req.Text,
+        "format":             "wav",
+        "topP":               0.7,
+        "max_new_tokens":     1024,
+        "chunk_length":       100,
+        "repetition_penalty": 1.2,
+        "temperature":        0.7,
+        "need_asr":           false,
+        "streaming":          false,
+        "is_fixed_seed":      0,
+        "is_norm":            0,
+        "reference_audio":    preResp.ASRFormatAudioURL,
+        "reference_text":     preResp.ReferenceAudioText,
+    }
+    
+    body, _ = json.Marshal(ttsReq)
+    log.Printf("TTS请求内容: %s", string(body))
+    url = fmt.Sprintf("%s/v1/invoke", cfg.TTSBaseURL)
+    resp, err = httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
+    if err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS合成失败: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != 200 {
+        b, _ := io.ReadAll(resp.Body)
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS合成失败: %s", string(b))
+        return
+    }
+    
+    // 保存TTS生成的音频
+    outVoice := filepath.Join(cfg.HostVoiceDir, sanitizeFilename(req.Speaker)+".wav")
+    f, err := os.Create(outVoice)
+    if err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS音频保存失败: %v", err)
+        return
+    }
+    if _, err := io.Copy(f, resp.Body); err != nil {
+        f.Close()
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS音频写入失败: %v", err)
+        return
+    }
+    f.Close()
+    
+    // 复制到视频目录
+    outInVideo := filepath.Join(cfg.HostVideoDir, filepath.Base(outVoice))
+    if err := copyFile(outVoice, outInVideo); err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("TTS音频拷贝失败: %v", err)
+        return
+    }
+    
+    // 步骤5: 视频合成提交 (70%)
+    status.CurrentStep = "提交视频合成任务"
+    status.Progress = 70
+    
+    taskCode := fmt.Sprintf("auto-%s", taskID)
+    payload := map[string]any{
+        "audio_url": filepath.Join(cfg.ContainerDataRoot, filepath.Base(outVoice)),
+        "video_url": filepath.Join(cfg.ContainerDataRoot, "silent.mp4"),
+        "code":       taskCode,
+        "chaofen":    0,
+        "watermark_switch": 0,
+        "pn":         1,
+    }
+    
+    body, _ = json.Marshal(payload)
+    url = fmt.Sprintf("%s/easy/submit", cfg.VideoBaseURL)
+    resp, err = httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
+    if err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("视频合成提交失败: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != 200 {
+        b, _ := io.ReadAll(resp.Body)
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("视频合成提交失败: %s", string(b))
+        return
+    }
+    
+    // 步骤6: 轮询视频合成结果 (70-100%)
+    status.CurrentStep = "等待视频合成完成"
+    status.Progress = 80
+    
+    // 开始轮询，间隔30秒
+    ticker := time.NewTicker(30 * time.Second)
+    defer ticker.Stop()
+    
+    timeout := time.After(30 * time.Minute) // 30分钟超时
+    checkCount := 0
+    
+    for {
+        select {
+        case <-ticker.C:
+            checkCount++
+            // 检查视频是否生成完成
+            inside := filepath.Join(cfg.ContainerDataRoot, "temp", fmt.Sprintf("%s-r.mp4", taskCode))
+            
+            // 更新状态信息
+            status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟)", checkCount, checkCount/2)
+            
+            checkCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+            stdout, stderr, err := run(checkCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "bash", "-lc", fmt.Sprintf("if [ -f '%s' ]; then echo FOUND; else echo MISSING; fi", inside))
+            cancel()
+            
+            log.Printf("视频合成检查 #%d: 文件路径=%s, 错误=%v, stdout=%s, stderr=%s", checkCount, inside, err, stdout, stderr)
+            
+            // 检查stdout和stderr中是否包含FOUND
+            if err == nil && (strings.Contains(stdout, "FOUND") || strings.Contains(stderr, "FOUND")) {
+                // 视频生成完成
+                status.CurrentStep = "下载最终视频"
+                status.Progress = 95
+                
+                // 拷贝到结果目录
+                hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", taskCode))
+                if err := os.MkdirAll(filepath.Dir(hostOut), 0o755); err != nil {
+                    status.Status = "failed"
+                    status.Error = fmt.Sprintf("创建结果目录失败: %v", err)
+                    return
+                }
+                
+                copyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+                _, cpErr, err := run(copyCtx, "docker", "cp", fmt.Sprintf("%s:%s", cfg.GenVideoContainer, inside), hostOut)
+                cancel()
+                
+                if err != nil {
+                    status.Status = "failed"
+                    status.Error = fmt.Sprintf("视频拷贝失败: %v | %s", err, cpErr)
+                    return
+                }
+                
+                // 可选拷贝到Windows目录
+                if req.CopyToCompany {
+                    companyOut := filepath.Join(cfg.WindowsCompanyDir, fmt.Sprintf("%s-r.mp4", taskCode))
+                    if err := copyFile(hostOut, companyOut); err != nil {
+                        log.Printf("拷贝到Windows目录失败: %v", err)
+                    }
+                }
+                
+                // 完成
+                status.Status = "completed"
+                status.CurrentStep = "处理完成"
+                status.Progress = 100
+                status.ResultVideo = fmt.Sprintf("%s-r.mp4", taskCode)
+                status.ResultPath = hostOut
+                return
+            }
+            
+            // 更新进度
+            if status.Progress < 90 {
+                status.Progress += 2
+            }
+            
+        case <-timeout:
+            status.Status = "failed"
+            status.Error = "视频合成超时"
+            return
+        }
+    }
+}
+
+// /api/auto/status/:taskId: 查询自动化处理状态
+func handleAutoStatus(c *gin.Context) {
+    taskID := c.Param("taskId")
+    status, exists := taskStatusMap[taskID]
+    if !exists {
+        c.JSON(404, gin.H{"error": "任务不存在"})
+        return
+    }
+    
+    c.JSON(200, status)
+}
+
+// /api/download/video/:filename: 下载视频文件
+func handleDownloadVideo(c *gin.Context) {
+    filename := c.Param("filename")
+    if filename == "" {
+        c.JSON(400, gin.H{"error": "缺少文件名"})
+        return
+    }
+    
+    // 安全检查：确保文件名不包含路径遍历
+    filename = sanitizeFilename(filename)
+    
+    // 构建文件路径
+    filePath := filepath.Join(cfg.HostResultDir, filename)
+    
+    // 检查文件是否存在
+    if _, err := os.Stat(filePath); os.IsNotExist(err) {
+        c.JSON(404, gin.H{"error": "文件不存在"})
+        return
+    }
+    
+    // 设置下载头
+    c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+    c.Header("Content-Type", "video/mp4")
+    
+    // 发送文件
+    c.File(filePath)
 }

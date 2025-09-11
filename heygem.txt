@@ -1,26 +1,18 @@
 
-首先把指定的音频标准化wav
-ffmpeg -y -i ref.wav  -af "loudnorm=I=-16:TP=-1.5:LRA=11" -ar 16000 -ac 1 -c:a pcm_s16le ref_norm.wav
+如果提交的音频是mp3则先转换成wav
+ffmpeg -i /mnt/c/heygem/zhuqi.mp3 -ar 16000 -ac 1 /mnt/c/heygem/zhuqi_16k.wav -y
 
-(可选)
-# 去掉明显的头尾静音，再转成目标规格
-ffmpeg -y -i in.mp3 \
-  -af "silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:\
-stop_periods=1:stop_duration=0:stop_threshold=-50dB" \
-  -ac 1 -ar 16000 -acodec pcm_s16le ref_trim.wav
+把指定的音频标准化wav
+ffmpeg -y -i zhuqi_16k.wav  -af "loudnorm=I=-16:TP=-1.5:LRA=11" -ar 16000 -ac 1 -c:a pcm_s16le zhuqi_xxx.wav
 
-（可选）响度归一化
-ffmpeg -y -i ref_trim.wav \
-  -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
-  -ar 16000 -ac 1 -c:a pcm_s16le ref_norm.wav
 
 把视频静音
-ffmpeg -y -i .\zhuqi.mp4 -an -c:v copy silent.mp4
+ffmpeg -y -i .\zhuqi.mp4 -an -c:v copy zhuqi_silent.mp4
 
 把对应的音频放到指定目录
-sudo cp "/mnt/c/heygem/ref_norm.wav"   /root/heygem_data/voice/data/
+sudo cp "/mnt/c/heygem/zhuqi_xxx.wav"   /root/heygem_data/voice/data/
 把对应的视频放到指定目录
-sudo cp "/mnt/c/heygem/silent.mp4"  /root/heygem_data/face2face/
+sudo cp "/mnt/c/heygem/zhiqi_silent.mp4"  /root/heygem_data/face2face/
 
 
 我是在wsl2 里面运行的codex，在本地使用docker-compose-linux.yml启动的服务，但是我发现里面对于视频静音、音频处理等，需要使用命令行处理完了，再放到指定▌目录，我把整个过程记录下来了，我想你使用golang+gin、vue3+tailwindCSS给我实现这些能力，我会提供给你我整个启动的操作步骤
@@ -30,7 +22,7 @@ curl -s http://127.0.0.1:18180/v1/preprocess_and_tran \
   -H "Content-Type: application/json" \
   -d '{
     "format": "wav",
-    "reference_audio": "ref_norm.wav",
+    "reference_audio": "zhuqi_xxx.wav",
     "lang": "zh"
   }'
 
@@ -75,7 +67,7 @@ curl -s http://127.0.0.1:8383/easy/submit \
   -H "Content-Type: application/json" \
   -d '{
     "audio_url": "/code/data/demo001.wav",
-    "video_url": "/code/data/silent.mp4",
+    "video_url": "/code/data/zhiqi_silence.mp4",
     "code": "task001",
     "chaofen": 0,
     "watermark_switch": 0,

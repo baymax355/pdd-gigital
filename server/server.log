@@ -1,0 +1,46 @@
+[GIN-debug] [WARNING] Creating an Engine instance with the Logger and Recovery middleware already attached.
+
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST   /v1/preprocess_and_tran   --> main.handleProxyPreprocess (3 handlers)
+[GIN-debug] POST   /v1/invoke                --> main.handleProxyInvoke (3 handlers)
+[GIN-debug] POST   /easy/submit              --> main.handleProxySubmit (3 handlers)
+[GIN-debug] GET    /api/health               --> main.main.func1 (3 handlers)
+[GIN-debug] GET    /api/files                --> main.handleListFiles (3 handlers)
+[GIN-debug] POST   /api/upload/audio         --> main.handleUploadAudio (3 handlers)
+[GIN-debug] POST   /api/upload/video         --> main.handleUploadVideo (3 handlers)
+[GIN-debug] POST   /api/tts/preprocess       --> main.handleTTSPreprocess (3 handlers)
+[GIN-debug] POST   /api/tts/invoke           --> main.handleTTSInvoke (3 handlers)
+[GIN-debug] POST   /api/video/submit         --> main.handleVideoSubmit (3 handlers)
+[GIN-debug] GET    /api/video/result         --> main.handleVideoResult (3 handlers)
+[GIN-debug] POST   /api/auto/process         --> main.handleAutoProcess (3 handlers)
+[GIN-debug] GET    /api/auto/status/:taskId  --> main.handleAutoStatus (3 handlers)
+[GIN-debug] GET    /static/*filepath         --> github.com/gin-gonic/gin.(*RouterGroup).createStaticHandler.func1 (3 handlers)
+[GIN-debug] HEAD   /static/*filepath         --> github.com/gin-gonic/gin.(*RouterGroup).createStaticHandler.func1 (3 handlers)
+[GIN-debug] GET    /                         --> main.main.func2 (3 handlers)
+2025/09/10 18:53:52 静态资源目录: ../client/dist
+2025/09/10 18:53:52 服务启动于 :8090
+[GIN-debug] [WARNING] You trusted all proxies, this is NOT safe. We recommend you to set a value.
+Please check https://pkg.go.dev/github.com/gin-gonic/gin#readme-don-t-trust-all-proxies for details.
+[GIN-debug] Listening and serving HTTP on :8090
+2025/09/10 18:53:59 开始保存音频文件: lh.MP3
+2025/09/10 18:53:59 保存文件: lh.MP3, 大小: 1616925, 目标目录: data/upload
+2025/09/10 18:53:59 音频文件保存成功: data/upload/ref.wav
+2025/09/10 18:53:59 开始保存视频文件: lh.mp4
+2025/09/10 18:53:59 保存文件: lh.mp4, 大小: 69952997, 目标目录: data/upload
+2025/09/10 18:53:59 视频文件保存成功: data/upload/video.mp4
+[GIN] 2025/09/10 - 18:53:59 | 200 |  708.827476ms |       127.0.0.1 | POST     "/api/auto/process"
+[GIN] 2025/09/10 - 18:53:59 | 200 |      51.614µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:02 | 200 |      30.128µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:05 | 200 |      32.441µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:08 | 200 |      53.127µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:12 | 200 |       41.09µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:15 | 200 |      28.155µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:18 | 200 |       26.01µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:21 | 200 |      36.882µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+[GIN] 2025/09/10 - 18:54:24 | 200 |       23.26µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"
+2025/09/10 18:54:27 TTS预处理响应: ReferenceAudio=/code/sessions/20250910/6a4238181223423f8a0f340764dbc461/format_denoise_ref_norm_part0.wav, ReferenceText=就是这个苗药白砂糖浆。我向所有老慢之朋友声明一下，如果搞不定你的咳喘，痰多，你就告诉所有人，在难调的肺问题，就用它老慢之3年，晨起咳嗽痰多，白皙活动气短的一盒老慢之五。
+2025/09/10 18:54:27 TTS请求内容: {"chunk_length":100,"format":"wav","is_fixed_seed":0,"is_norm":0,"max_new_tokens":1024,"need_asr":false,"reference_audio":"/code/sessions/20250910/6a4238181223423f8a0f340764dbc461/format_denoise_ref_norm_part0.wav","reference_text":"就是这个苗药白砂糖浆。我向所有老慢之朋友声明一下，如果搞不定你的咳喘，痰多，你就告诉所有人，在难调的肺问题，就用它老慢之3年，晨起咳嗽痰多，白皙活动气短的一盒老慢之五。","repetition_penalty":1.2,"speaker":"demo001","streaming":false,"temperature":0.7,"text":"","topP":0.7}
+[GIN] 2025/09/10 - 18:54:27 | 200 |      24.918µs |       127.0.0.1 | GET      "/api/auto/status/auto-1757501639"

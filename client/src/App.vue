@@ -1,14 +1,79 @@
 <template>
   <div class="max-w-5xl mx-auto p-6 space-y-8">
-    <h1 class="text-2xl font-bold">HeyGem 全流程助手</h1>
+    <h1 class="text-2xl font-bold">胖哒哒数字人</h1>
+    
+    <!-- 全自动化处理 -->
+    <section class="bg-green-50 border border-green-200 rounded-lg p-6">
+      <h2 class="text-xl font-semibold text-green-800 mb-4">🚀 全自动化处理</h2>
+      <p class="text-green-700 mb-4">只需上传音频和视频文件，系统将自动完成整个处理流程</p>
+      
+      <form @submit.prevent="startAutoProcess" class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">音频文件</label>
+            <input type="file" accept="audio/*" @change="onAutoAudioPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">视频文件</label>
+            <input type="file" accept="video/*" @change="onAutoVideoPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">说话人ID</label>
+            <input v-model="autoSpeaker" placeholder="demo001" class="w-full border rounded px-3 py-2" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">要合成的文本</label>
+            <textarea v-model="autoText" placeholder="请输入要合成的文本..." class="w-full border rounded px-3 py-2 h-20"></textarea>
+          </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+          <label class="flex items-center">
+            <input type="checkbox" v-model="autoCopyToCompany" class="mr-2" />
+            <span class="text-sm">拷贝到Windows目录</span>
+          </label>
+        </div>
+        
+        <button type="submit" :disabled="!autoAudioFile || !autoVideoFile || !autoText" 
+                class="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
+          开始全自动处理
+        </button>
+      </form>
+      
+      <!-- 自动化处理状态 -->
+      <div v-if="autoStatus" class="mt-6 p-4 bg-white rounded-lg border">
+        <h3 class="font-semibold mb-2">处理状态</h3>
+        <div class="space-y-2">
+          <div class="flex justify-between items-center">
+            <span class="text-sm font-medium">{{ autoStatus.current_step }}</span>
+            <span class="text-sm text-gray-600">{{ autoStatus.progress }}%</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2">
+            <div class="bg-green-600 h-2 rounded-full transition-all duration-300" :style="{ width: autoStatus.progress + '%' }"></div>
+          </div>
+          <div v-if="autoStatus.status === 'completed'" class="text-green-600 font-medium">
+            ✅ 处理完成！视频文件：{{ autoStatus.result_video }}
+            <div class="mt-2">
+              <a :href="`/api/download/video/${autoStatus.result_video}`" 
+                 class="inline-block bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors">
+                📥 下载视频
+              </a>
+            </div>
+          </div>
+          <div v-if="autoStatus.status === 'failed'" class="text-red-600 font-medium">
+            ❌ 处理失败：{{ autoStatus.error }}
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="bg-white p-4 rounded shadow space-y-3">
       <h2 class="font-semibold">1) 音频上传与标准化</h2>
       <form @submit.prevent="uploadAudio" class="flex items-center gap-3 flex-wrap">
         <input type="file" accept="audio/*" @change="onAudioPick" class="block" />
-        <label class="inline-flex items-center gap-2">
-          <input type="checkbox" v-model="trimSilence" /> 去头尾静音
-        </label>
         <button class="px-3 py-1 bg-blue-600 text-white rounded" :disabled="!audioFile">开始处理</button>
       </form>
       <div v-if="audioResult" class="text-sm text-slate-600">
@@ -94,13 +159,24 @@ const resultCode = ref('task001')
 const copyToCompany = ref(false)
 const resultResp = ref(null)
 
+// 自动化处理相关
+const autoAudioFile = ref(null)
+const autoVideoFile = ref(null)
+const autoSpeaker = ref('demo001')
+const autoText = ref('')
+const autoCopyToCompany = ref(false)
+const autoStatus = ref(null)
+const autoTaskId = ref('')
+
 function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
 function onVideoPick(e){ videoFile.value = e.target.files?.[0] }
+
+function onAutoAudioPick(e){ autoAudioFile.value = e.target.files?.[0] }
+function onAutoVideoPick(e){ autoVideoFile.value = e.target.files?.[0] }
 
 async function uploadAudio(){
   const fd = new FormData()
   fd.append('file', audioFile.value)
-  fd.append('trim_silence', String(trimSilence.value))
   const r = await fetch('/api/upload/audio', { method: 'POST', body: fd })
   audioResult.value = await r.json()
 }
@@ -161,6 +237,53 @@ async function refreshFiles(){
   files.value.video = j.files || []
   if(!selVideo.value && files.value.video.includes('silent.mp4')) selVideo.value = 'silent.mp4'
   if(!selAudio.value) selAudio.value = files.value.video.find(f => f.endsWith('.wav')) || ''
+}
+
+// 自动化处理函数
+async function startAutoProcess(){
+  const fd = new FormData()
+  fd.append('audio', autoAudioFile.value)
+  fd.append('video', autoVideoFile.value)
+  fd.append('speaker', autoSpeaker.value)
+  fd.append('text', autoText.value)
+  fd.append('copy_to_company', String(autoCopyToCompany.value))
+  
+  try {
+    const r = await fetch('/api/auto/process', { method: 'POST', body: fd })
+    const result = await r.json()
+    
+    if (result.task_id) {
+      autoTaskId.value = result.task_id
+      autoStatus.value = { status: 'processing', current_step: '开始处理', progress: 0 }
+      
+      // 开始轮询状态
+      pollAutoStatus()
+    } else {
+      alert('启动自动化处理失败: ' + (result.error || '未知错误'))
+    }
+  } catch (error) {
+    alert('启动自动化处理失败: ' + error.message)
+  }
+}
+
+// 轮询自动化处理状态
+async function pollAutoStatus(){
+  if (!autoTaskId.value) return
+  
+  try {
+    const r = await fetch(`/api/auto/status/${autoTaskId.value}`)
+    const status = await r.json()
+    
+    autoStatus.value = status
+    
+    // 如果还在处理中，继续轮询
+    if (status.status === 'processing') {
+      setTimeout(pollAutoStatus, 3000) // 3秒轮询一次
+    }
+  } catch (error) {
+    console.error('轮询状态失败:', error)
+    setTimeout(pollAutoStatus, 5000) // 出错时5秒后重试
+  }
 }
 
 onMounted(refreshFiles)

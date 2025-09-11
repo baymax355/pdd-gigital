@@ -6,6 +6,7 @@ import (
     "errors"
     "fmt"
     "io"
+    "log"
     "mime/multipart"
     "net/http"
     "os"
@@ -42,8 +43,13 @@ func saveMultipartFile(file *multipart.FileHeader, dstDir, wantName string) (str
     if file == nil {
         return "", errors.New("file 不能为空")
     }
+    
+    // 添加调试信息
+    log.Printf("保存文件: %s, 大小: %d, 目标目录: %s", file.Filename, file.Size, dstDir)
+    
     src, err := file.Open()
     if err != nil {
+        log.Printf("打开文件失败: %v", err)
         return "", err
     }
     defer src.Close()

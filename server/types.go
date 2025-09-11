@@ -39,3 +39,21 @@ type SubmitVideoReq struct {
     PN              int    `json:"pn"`
 }
 
+// 自动化处理请求
+type AutoProcessReq struct {
+    Speaker         string `json:"speaker"`
+    Text            string `json:"text"`
+    CopyToCompany   bool   `json:"copy_to_company"`
+}
+
+// 自动化处理状态
+type AutoProcessStatus struct {
+    TaskID          string `json:"task_id"`
+    Status          string `json:"status"` // "processing", "completed", "failed"
+    CurrentStep     string `json:"current_step"`
+    Progress        int    `json:"progress"` // 0-100
+    Error           string `json:"error,omitempty"`
+    ResultVideo     string `json:"result_video,omitempty"`
+    ResultPath      string `json:"result_path,omitempty"`
+}
+
