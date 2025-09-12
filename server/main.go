@@ -9,6 +9,7 @@ import (
     "net/http"
     "os"
     "path/filepath"
+    "strconv"
     "strings"
     "time"
 
@@ -630,6 +631,10 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
             // 更新状态信息
             status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟)", checkCount, checkCount/2)
             
+            // 检查文件是否存在且写入完成
+            checkCmd := fmt.Sprintf("docker exec -i %s bash -lc 'if [ -f \"%s\" ]; then echo FOUND; else echo MISSING; fi'", cfg.GenVideoContainer, inside)
+            log.Printf("执行文件检查命令: %s", checkCmd)
+            
             checkCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
             stdout, stderr, err := run(checkCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "bash", "-lc", fmt.Sprintf("if [ -f '%s' ]; then echo FOUND; else echo MISSING; fi", inside))
             cancel()
@@ -641,11 +646,57 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
             
             // 检查stdout和stderr中是否包含FOUND
             if err == nil && (strings.Contains(stdout, "FOUND") || strings.Contains(stderr, "FOUND")) {
-                // 视频生成完成
-                status.CurrentStep = "下载最终视频"
-                status.Progress = 95
+                // 文件存在，但需要检查是否还在写入
+                log.Printf("文件已存在，检查是否还在写入...")
                 
-                // 拷贝到结果目录 - 带重试和完整性检查
+                // 等待文件稳定 - 检查文件大小是否还在变化
+                var lastSize string
+                var stableCount int
+                
+                for stabilityCheck := 1; stabilityCheck <= 5; stabilityCheck++ {
+                    sizeCmd := fmt.Sprintf("docker exec -i %s stat -c %%s %s", cfg.GenVideoContainer, inside)
+                    log.Printf("稳定性检查 #%d: %s", stabilityCheck, sizeCmd)
+                    
+                    sizeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+                    sizeOut, _, sizeErr := run(sizeCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "stat", "-c", "%s", inside)
+                    cancel()
+                    
+                    if sizeErr != nil {
+                        log.Printf("稳定性检查失败: %v", sizeErr)
+                        break
+                    }
+                    
+                    currentSize := strings.TrimSpace(sizeOut)
+                    log.Printf("当前文件大小: %s bytes", currentSize)
+                    
+                    if stabilityCheck == 1 {
+                        lastSize = currentSize
+                        stableCount = 1
+                    } else if currentSize == lastSize {
+                        stableCount++
+                        log.Printf("文件大小稳定 (连续%d次相同)", stableCount)
+                        if stableCount >= 3 {
+                            log.Printf("✅ 文件写入完成，大小稳定: %s bytes", currentSize)
+                            break
+                        }
+                    } else {
+                        log.Printf("文件大小仍在变化: %s -> %s", lastSize, currentSize)
+                        lastSize = currentSize
+                        stableCount = 1
+                    }
+                    
+                    if stabilityCheck < 5 {
+                        time.Sleep(3 * time.Second)
+                    }
+                }
+                
+                // 如果文件稳定了，继续处理
+                if stableCount >= 3 {
+                    // 视频生成完成
+                    status.CurrentStep = "下载最终视频"
+                    status.Progress = 95
+                    
+                    // 拷贝到结果目录 - 带重试和完整性检查
                 hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", taskCode))
                 if err := os.MkdirAll(filepath.Dir(hostOut), 0o755); err != nil {
                     status.Status = "failed"
@@ -720,11 +771,36 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
                     } else {
                         log.Printf("复制命令执行成功，开始验证文件...")
                         
-                        // 验证文件大小
+                        // 验证文件大小 - 添加更详细的检查
                         if expectedSize != "" {
+                            // 先检查容器中的文件大小是否还在变化
+                            checkCmd := fmt.Sprintf("docker exec -i %s stat -c %%s %s", cfg.GenVideoContainer, inside)
+                            log.Printf("复制后检查容器文件大小: %s", checkCmd)
+                            
+                            checkCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+                            checkOut, _, checkErr := run(checkCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "stat", "-c", "%s", inside)
+                            cancel()
+                            
+                            if checkErr == nil {
+                                currentContainerSize := strings.TrimSpace(checkOut)
+                                log.Printf("复制后容器文件大小: %s bytes (复制前: %s bytes)", currentContainerSize, expectedSize)
+                                
+                                if currentContainerSize != expectedSize {
+                                    log.Printf("⚠️ 容器文件大小在复制过程中发生了变化!")
+                                    log.Printf("这可能是视频合成还在进行中，或者有并发写入")
+                                }
+                            }
+                            
+                            // 检查目标文件
                             if stat, err := os.Stat(hostOut); err == nil {
                                 actualSize := fmt.Sprintf("%d", stat.Size())
                                 log.Printf("文件大小验证: 期望 %s bytes, 实际 %s bytes", expectedSize, actualSize)
+                                
+                                // 计算差异
+                                expectedInt, _ := strconv.ParseInt(expectedSize, 10, 64)
+                                actualInt, _ := strconv.ParseInt(actualSize, 10, 64)
+                                diff := actualInt - expectedInt
+                                log.Printf("大小差异: %d bytes (%.2f MB)", diff, float64(diff)/1024/1024)
                                 
                                 if actualSize == expectedSize {
                                     log.Printf("✅ 文件复制成功，大小完全匹配!")
@@ -788,8 +864,11 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
                 status.ResultPath = hostOut
                 status.EndTime = time.Now().Unix()
                 status.TotalDuration = status.EndTime - status.StartTime
-                log.Printf("任务 %s 完成，总耗时: %d 秒 (%.1f 分钟)", taskID, status.TotalDuration, float64(status.TotalDuration)/60)
-                return
+                    log.Printf("任务 %s 完成，总耗时: %d 秒 (%.1f 分钟)", taskID, status.TotalDuration, float64(status.TotalDuration)/60)
+                    return
+                } else {
+                    log.Printf("文件大小未稳定，继续等待...")
+                }
             }
             
             // 更新进度
