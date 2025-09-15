@@ -41,10 +41,34 @@
           </label>
         </div>
         
-        <button type="submit" :disabled="!autoAudioFile || !autoVideoFile || (autoUseTTS && !autoText)" 
+        <button type="submit" :disabled="isUploading || !autoAudioFile || !autoVideoFile || (autoUseTTS && !autoText)" 
                 class="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
           开始全自动处理
         </button>
+
+        <!-- 上传进度条 -->
+        <div v-if="isUploading" class="mt-4 space-y-2">
+          <div class="text-sm text-gray-600">正在上传音/视频到服务器，请稍候...</div>
+          <div>
+            <div class="flex justify-between text-xs text-gray-600"><span>音频</span><span>{{ uploadAudioPercent }}%</span></div>
+            <div class="w-full bg-gray-200 rounded h-2">
+              <div class="bg-blue-600 h-2 rounded" :style="{ width: uploadAudioPercent + '%' }"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs text-gray-600"><span>视频</span><span>{{ uploadVideoPercent }}%</span></div>
+            <div class="w-full bg-gray-200 rounded h-2">
+              <div class="bg-blue-600 h-2 rounded" :style="{ width: uploadVideoPercent + '%' }"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs text-gray-600"><span>总进度</span><span>{{ uploadPercent }}%</span></div>
+            <div class="w-full bg-gray-200 rounded h-2">
+              <div class="bg-green-600 h-2 rounded" :style="{ width: uploadPercent + '%' }"></div>
+            </div>
+          </div>
+          <div v-if="uploadError" class="text-red-600 text-sm">上传失败：{{ uploadError }}</div>
+        </div>
       </form>
       
       <!-- 自动化处理状态 -->
@@ -220,6 +244,13 @@ const autoUseTTS = ref(true)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
 
+// 上传进度
+const isUploading = ref(false)
+const uploadPercent = ref(0)
+const uploadAudioPercent = ref(0)
+const uploadVideoPercent = ref(0)
+const uploadError = ref('')
+
 // 队列列表和批量下载
 const taskList = ref([])
 const selectedTaskIds = ref([])
@@ -298,6 +329,8 @@ async function refreshFiles(){
 
 // 自动化处理函数
 async function startAutoProcess(){
+  if (!autoAudioFile.value || !autoVideoFile.value) return
+
   const fd = new FormData()
   fd.append('audio', autoAudioFile.value)
   fd.append('video', autoVideoFile.value)
@@ -305,23 +338,69 @@ async function startAutoProcess(){
   fd.append('text', autoText.value)
   fd.append('copy_to_company', String(autoCopyToCompany.value))
   fd.append('use_tts', String(autoUseTTS.value))
-  
-  try {
-    const r = await fetch('/api/auto/process', { method: 'POST', body: fd })
-    const result = await r.json()
-    
-    if (result.task_id) {
-      autoTaskId.value = result.task_id
-      autoStatus.value = { status: 'queued', current_step: '等待排队执行', progress: 0 }
-      
-      // 开始轮询状态
-      pollAutoStatus()
-    } else {
-      alert('启动自动化处理失败: ' + (result.error || '未知错误'))
+
+  // 使用 XHR 以便拿到上传进度
+  isUploading.value = true
+  uploadPercent.value = 0
+  uploadAudioPercent.value = 0
+  uploadVideoPercent.value = 0
+  uploadError.value = ''
+
+  const audioSize = autoAudioFile.value?.size || 0
+  const videoSize = autoVideoFile.value?.size || 0
+
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', '/api/auto/process', true)
+
+  let lastTs = Date.now()
+  let lastLoaded = 0
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return
+    const loaded = e.loaded
+    const total = e.total
+    uploadPercent.value = Math.min(100, Math.round((loaded / total) * 100))
+    // 估算分摊到两个文件的进度：音频在前、视频在后（近似）
+    const audioLoaded = Math.min(loaded, audioSize)
+    const videoLoaded = Math.max(0, loaded - audioSize)
+    uploadAudioPercent.value = audioSize ? Math.min(100, Math.round((audioLoaded / audioSize) * 100)) : 100
+    uploadVideoPercent.value = videoSize ? Math.min(100, Math.round((Math.min(videoLoaded, videoSize) / videoSize) * 100)) : 100
+
+    // 简易速度（可选）
+    const now = Date.now()
+    const dt = (now - lastTs) / 1000
+    if (dt >= 0.5) {
+      const speed = (loaded - lastLoaded) / dt // bytes/s
+      lastTs = now
+      lastLoaded = loaded
+      // 可在此扩展显示速度/剩余时间（当前不显示）
     }
-  } catch (error) {
-    alert('启动自动化处理失败: ' + error.message)
   }
+
+  xhr.onerror = () => {
+    isUploading.value = false
+    uploadError.value = '网络错误，请重试'
+  }
+  xhr.onload = () => {
+    isUploading.value = false
+    try {
+      const result = JSON.parse(xhr.responseText || '{}')
+      if (xhr.status >= 400 || result.error) {
+        uploadError.value = result.error || `服务错误(${xhr.status})`
+        return
+      }
+      if (result.task_id) {
+        autoTaskId.value = result.task_id
+        autoStatus.value = { status: 'queued', current_step: '等待排队执行', progress: 0 }
+        pollAutoStatus()
+      } else {
+        uploadError.value = '未返回任务ID'
+      }
+    } catch (err) {
+      uploadError.value = '解析返回失败'
+    }
+  }
+
+  xhr.send(fd)
 }
 
 // 轮询自动化处理状态
