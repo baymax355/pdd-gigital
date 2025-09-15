@@ -58,9 +58,14 @@ func main() {
     staticCandidates = append(staticCandidates, "./client/dist", "../client/dist")
     for _, p := range staticCandidates {
         if st, err := os.Stat(p); err == nil && st.IsDir() {
-            // 使用 /static/*filepath 而不是 /*filepath 避免与API路由冲突
+            // 提供 /static 访问整包资源，兼容旧路径
             r.Static("/static", p)
-            // 添加根路径的静态文件服务，但排除API路径
+            // 显式提供 /assets 资源，匹配 Vite 产物引用路径 /assets/*
+            r.Static("/assets", filepath.Join(p, "assets"))
+            // 常见静态文件
+            r.StaticFile("/favicon.ico", filepath.Join(p, "favicon.ico"))
+            r.StaticFile("/robots.txt", filepath.Join(p, "robots.txt"))
+            // 根路径返回 index.html
             r.GET("/", func(c *gin.Context) {
                 c.File(filepath.Join(p, "index.html"))
             })
