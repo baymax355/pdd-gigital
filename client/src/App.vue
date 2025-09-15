@@ -77,6 +77,46 @@
       </div>
     </section>
 
+    <!-- 任务队列与批量下载 -->
+    <section class="bg-white p-4 rounded shadow space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">📋 任务队列</h2>
+        <div class="space-x-2">
+          <button class="px-3 py-1 bg-gray-100 rounded border" @click="refreshTasks">刷新</button>
+          <button class="px-3 py-1 bg-purple-600 text-white rounded" :disabled="selectedTaskIds.length===0" @click="downloadSelected">打包下载选中</button>
+          <a class="px-3 py-1 bg-purple-600 text-white rounded" href="/api/auto/archive?all=1">打包下载全部已完成</a>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="text-left border-b">
+              <th class="p-2">选择</th>
+              <th class="p-2">任务ID</th>
+              <th class="p-2">状态</th>
+              <th class="p-2">进度</th>
+              <th class="p-2">当前步骤</th>
+              <th class="p-2">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in taskList" :key="t.task_id" class="border-b">
+              <td class="p-2">
+                <input type="checkbox" :disabled="t.status !== 'completed'" :value="t.task_id" v-model="selectedTaskIds" />
+              </td>
+              <td class="p-2 whitespace-nowrap">{{ t.task_id }}</td>
+              <td class="p-2">{{ t.status }}</td>
+              <td class="p-2">{{ t.progress }}%</td>
+              <td class="p-2">{{ t.current_step }}</td>
+              <td class="p-2">
+                <a v-if="t.status==='completed'" :href="`/api/download/video/${t.result_video}`" class="text-blue-600 hover:underline">下载</a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="bg-white p-4 rounded shadow space-y-3">
       <h2 class="font-semibold">1) 音频上传与标准化</h2>
       <form @submit.prevent="uploadAudio" class="flex items-center gap-3 flex-wrap">
@@ -176,6 +216,10 @@ const autoUseTTS = ref(true)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
 
+// 队列列表和批量下载
+const taskList = ref([])
+const selectedTaskIds = ref([])
+
 function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
 function onVideoPick(e){ videoFile.value = e.target.files?.[0] }
 
@@ -263,7 +307,7 @@ async function startAutoProcess(){
     
     if (result.task_id) {
       autoTaskId.value = result.task_id
-      autoStatus.value = { status: 'processing', current_step: '开始处理', progress: 0 }
+      autoStatus.value = { status: 'queued', current_step: '等待排队执行', progress: 0 }
       
       // 开始轮询状态
       pollAutoStatus()
@@ -285,8 +329,8 @@ async function pollAutoStatus(){
     
     autoStatus.value = status
     
-    // 如果还在处理中，继续轮询
-    if (status.status === 'processing') {
+    // 如果还未结束，继续轮询（含 queued/processing）
+    if (status.status !== 'completed' && status.status !== 'failed') {
       setTimeout(pollAutoStatus, 3000) // 3秒轮询一次
     }
   } catch (error) {
@@ -313,6 +357,24 @@ function formatDuration(seconds) {
 }
 
 onMounted(refreshFiles)
+
+async function refreshTasks(){
+  try {
+    const r = await fetch('/api/auto/tasks')
+    const j = await r.json()
+    taskList.value = j.tasks || []
+  } catch (e) {
+    console.error('刷新队列失败', e)
+  }
+}
+
+function downloadSelected(){
+  if (selectedTaskIds.value.length === 0) return
+  const q = encodeURIComponent(selectedTaskIds.value.join(','))
+  window.location.href = `/api/auto/archive?task_ids=${q}`
+}
+
+onMounted(refreshTasks)
 </script>
 
 <style scoped>

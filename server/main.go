@@ -5,10 +5,12 @@ import (
     "encoding/json"
     "fmt"
     "io"
+    "archive/zip"
     "log"
     "net/http"
     "os"
     "path/filepath"
+    "sort"
     "strconv"
     "strings"
     "time"
@@ -48,6 +50,8 @@ func main() {
         
         api.POST("/auto/process", handleAutoProcess)
         api.GET("/auto/status/:taskId", handleAutoStatus)
+        api.GET("/auto/tasks", handleAutoTasks)
+        api.GET("/auto/archive", handleAutoArchive)
         
         api.GET("/download/video/:filename", handleDownloadVideo)
     }
@@ -96,6 +100,7 @@ func main() {
 
     addr := fmt.Sprintf(":%s", cfg.Port)
     log.Printf("服务启动于 %s", addr)
+    startQueueWorker()
     if err := r.Run(addr); err != nil {
         log.Fatal(err)
     }
@@ -375,10 +380,36 @@ func handleVideoResult(c *gin.Context) {
 
 // 全局任务状态存储
 var taskStatusMap = make(map[string]*AutoProcessStatus)
+type queuedTask struct {
+    taskID    string
+    audioPath string
+    videoPath string
+    req       AutoProcessReq
+}
+var taskQueue = make(chan queuedTask, 100)
+var queueStarted bool
+
+func startQueueWorker() {
+    if queueStarted { return }
+    queueStarted = true
+    go func() {
+        log.Printf("任务队列工作线程已启动，容量=%d", cap(taskQueue))
+        for t := range taskQueue {
+            st := taskStatusMap[t.taskID]
+            if st != nil {
+                st.Status = "processing"
+                st.CurrentStep = "排队完成，开始处理"
+                st.Progress = 5
+                st.StartTime = time.Now().Unix()
+            }
+            // 使用新的背景上下文处理，串行执行
+            processAutomatically(context.Background(), t.taskID, t.audioPath, t.videoPath, t.req)
+        }
+    }()
+}
 
 // /api/auto/process: 全自动化处理接口
 func handleAutoProcess(c *gin.Context) {
-    ctx := c.Request.Context()
     
     // 获取上传的文件
     audioFile, err := c.FormFile("audio")
@@ -442,9 +473,19 @@ func handleAutoProcess(c *gin.Context) {
     }
     log.Printf("视频文件保存成功: %s", videoPath)
     
-    // 异步处理
-    go processAutomatically(ctx, taskID, audioPath, videoPath, req)
-    
+    // 入队列串行处理
+    status.Status = "queued"
+    status.CurrentStep = "等待排队执行"
+    select {
+    case taskQueue <- queuedTask{taskID: taskID, audioPath: audioPath, videoPath: videoPath, req: req}:
+        // ok
+    default:
+        status.Status = "failed"
+        status.Error = "任务队列已满，请稍后重试"
+        c.JSON(503, gin.H{"error": status.Error})
+        return
+    }
+
     c.JSON(200, gin.H{"task_id": taskID, "status": "started"})
 }
 
@@ -1018,6 +1059,59 @@ func handleAutoStatus(c *gin.Context) {
     }
     
     c.JSON(200, status)
+}
+
+// 列出所有任务状态（按开始时间倒序）
+func handleAutoTasks(c *gin.Context) {
+    list := make([]*AutoProcessStatus, 0, len(taskStatusMap))
+    for _, v := range taskStatusMap { list = append(list, v) }
+    // 简单排序：按 StartTime 倒序
+    sort.Slice(list, func(i, j int) bool { return list[i].StartTime > list[j].StartTime })
+    c.JSON(200, gin.H{"tasks": list})
+}
+
+// 打包下载：GET /api/auto/archive?task_ids=id1,id2 或 /api/auto/archive?all=1
+func handleAutoArchive(c *gin.Context) {
+    // 收集要打包的文件
+    var files []string
+    if c.Query("all") == "1" || strings.ToLower(c.Query("all")) == "true" {
+        for _, st := range taskStatusMap {
+            if st.Status == "completed" && st.ResultPath != "" {
+                if _, err := os.Stat(st.ResultPath); err == nil {
+                    files = append(files, st.ResultPath)
+                }
+            }
+        }
+    } else {
+        ids := strings.Split(c.Query("task_ids"), ",")
+        for _, id := range ids {
+            id = strings.TrimSpace(id)
+            if id == "" { continue }
+            if st, ok := taskStatusMap[id]; ok && st.Status == "completed" && st.ResultPath != "" {
+                if _, err := os.Stat(st.ResultPath); err == nil {
+                    files = append(files, st.ResultPath)
+                }
+            }
+        }
+    }
+    if len(files) == 0 {
+        c.JSON(400, gin.H{"error": "没有可打包的完成视频"})
+        return
+    }
+
+    // 设置响应头并流式写 Zip
+    c.Header("Content-Type", "application/zip")
+    c.Header("Content-Disposition", "attachment; filename=videos.zip")
+    zw := zip.NewWriter(c.Writer)
+    defer zw.Close()
+    for _, path := range files {
+        f, err := os.Open(path)
+        if err != nil { continue }
+        w, err := zw.Create(filepath.Base(path))
+        if err != nil { f.Close(); continue }
+        if _, err := io.Copy(w, f); err != nil { f.Close(); continue }
+        f.Close()
+    }
 }
 
 // /api/download/video/:filename: 下载视频文件
