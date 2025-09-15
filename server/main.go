@@ -662,6 +662,69 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
             
             // 更新状态信息
             status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟)", checkCount, checkCount/2)
+
+            // 优先通过宿主机挂载目录检测结果文件，避免依赖 docker 命令
+            resultName := fmt.Sprintf("%s-r.mp4", taskCode)
+            srcOnHost := filepath.Join(cfg.HostVideoDir, "temp", resultName)
+            hostOut := filepath.Join(cfg.HostResultDir, resultName)
+            if st, err := os.Stat(srcOnHost); err == nil && !st.IsDir() {
+                log.Printf("检测到结果文件: %s (size=%d)", srcOnHost, st.Size())
+                // 等待大小稳定（连续3次相同，每次间隔3s）
+                last := st.Size()
+                stable := 1
+                for i := 2; i <= 3; i++ {
+                    time.Sleep(3 * time.Second)
+                    st2, e2 := os.Stat(srcOnHost)
+                    if e2 != nil { log.Printf("稳定性检查失败: %v", e2); break }
+                    cur := st2.Size()
+                    log.Printf("稳定性检查 #%d: %d bytes", i, cur)
+                    if cur == last { stable++ } else { last = cur; stable = 1 }
+                }
+                if stable >= 3 {
+                    // 复制并校验
+                    copyOK := false
+                    for attempt := 1; attempt <= 3; attempt++ {
+                        log.Printf("=== 复制尝试(本地) #%d (src=%s -> dst=%s) ===", attempt, srcOnHost, hostOut)
+                        if err := copyFile(srcOnHost, hostOut); err != nil {
+                            log.Printf("复制失败: %v", err)
+                            if attempt < 3 { time.Sleep(5 * time.Second); continue }
+                        } else {
+                            if dstStat, e3 := os.Stat(hostOut); e3 == nil && dstStat.Size() == last {
+                                log.Printf("✅ 文件复制成功，大小匹配: %d bytes", last)
+                                copyOK = true
+                                break
+                            }
+                            log.Printf("❌ 复制后大小不匹配或读取失败")
+                            if attempt < 3 { time.Sleep(5 * time.Second); continue }
+                        }
+                    }
+                    if !copyOK {
+                        status.Status = "failed"
+                        status.Error = "视频拷贝到结果目录失败，已重试3次"
+                        return
+                    }
+                    // 可选拷贝到公司目录
+                    if req.CopyToCompany {
+                        companyOut := filepath.Join(cfg.WindowsCompanyDir, resultName)
+                        log.Printf("复制到公司目录: %s", companyOut)
+                        if err := copyFile(hostOut, companyOut); err != nil {
+                            log.Printf("拷贝到公司目录失败: %v", err)
+                        }
+                    }
+                    // 完成
+                    status.Status = "completed"
+                    status.CurrentStep = "处理完成"
+                    status.Progress = 100
+                    status.ResultVideo = resultName
+                    status.ResultPath = hostOut
+                    status.EndTime = time.Now().Unix()
+                    status.TotalDuration = status.EndTime - status.StartTime
+                    log.Printf("任务 %s 完成，总耗时: %d 秒 (%.1f 分钟)", taskID, status.TotalDuration, float64(status.TotalDuration)/60)
+                    return
+                } else {
+                    log.Printf("文件大小未稳定，继续等待...")
+                }
+            }
             
             // 检查文件是否存在且写入完成
             checkCmd := fmt.Sprintf("docker exec -i %s bash -lc 'if [ -f \"%s\" ]; then echo FOUND; else echo MISSING; fi'", cfg.GenVideoContainer, inside)
