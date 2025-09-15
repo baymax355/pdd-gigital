@@ -501,6 +501,11 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
             status.Error = fmt.Sprintf("处理异常: %v", r)
             status.Progress = 0
         }
+        // 确保失败场景记录结束时间与耗时
+        if status.Status == "failed" && status.EndTime == 0 {
+            status.EndTime = time.Now().Unix()
+            status.TotalDuration = status.EndTime - status.StartTime
+        }
     }()
     
     // 创建新的上下文，避免HTTP请求上下文被取消

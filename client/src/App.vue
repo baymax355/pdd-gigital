@@ -96,6 +96,8 @@
               <th class="p-2">状态</th>
               <th class="p-2">进度</th>
               <th class="p-2">当前步骤</th>
+              <th class="p-2">耗时</th>
+              <th class="p-2">错误</th>
               <th class="p-2">操作</th>
             </tr>
           </thead>
@@ -108,6 +110,8 @@
               <td class="p-2">{{ t.status }}</td>
               <td class="p-2">{{ t.progress }}%</td>
               <td class="p-2">{{ t.current_step }}</td>
+              <td class="p-2">{{ t.total_duration ? formatDuration(t.total_duration) : (t.start_time ? '进行中' : '-') }}</td>
+              <td class="p-2 text-red-600 max-w-[20ch] truncate" :title="t.error">{{ t.error }}</td>
               <td class="p-2">
                 <a v-if="t.status==='completed'" :href="`/api/download/video/${t.result_video}`" class="text-blue-600 hover:underline">下载</a>
               </td>
@@ -183,7 +187,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const audioFile = ref(null)
 const videoFile = ref(null)
@@ -219,6 +223,7 @@ const autoTaskId = ref('')
 // 队列列表和批量下载
 const taskList = ref([])
 const selectedTaskIds = ref([])
+let tasksTimer = null
 
 function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
 function onVideoPick(e){ videoFile.value = e.target.files?.[0] }
@@ -356,7 +361,12 @@ function formatDuration(seconds) {
   }
 }
 
-onMounted(refreshFiles)
+onMounted(() => {
+  refreshFiles()
+  refreshTasks()
+  tasksTimer = setInterval(refreshTasks, 5000)
+})
+onUnmounted(() => { if (tasksTimer) clearInterval(tasksTimer) })
 
 async function refreshTasks(){
   try {
