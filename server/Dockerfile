@@ -16,7 +16,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o heygem .
 
 # 运行阶段
-FROM alpine:latest
+# 运行阶段使用与构建相同的基础镜像，避免拉取额外镜像引发 403
+FROM golang:1.22-alpine AS runtime
 
 # 安装必要的工具
 RUN apk --no-cache add ca-certificates ffmpeg

@@ -58,6 +58,14 @@ func main() {
     staticCandidates = append(staticCandidates, "./client/dist", "../client/dist")
     for _, p := range staticCandidates {
         if st, err := os.Stat(p); err == nil && st.IsDir() {
+            // 资产缓存策略：assets 长缓存、html 不缓存
+            r.Use(func(c *gin.Context) {
+                path := c.Request.URL.Path
+                if strings.HasPrefix(path, "/assets/") {
+                    c.Writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+                }
+            })
+
             // 提供 /static 访问整包资源，兼容旧路径
             r.Static("/static", p)
             // 显式提供 /assets 资源，匹配 Vite 产物引用路径 /assets/*
@@ -67,7 +75,19 @@ func main() {
             r.StaticFile("/robots.txt", filepath.Join(p, "robots.txt"))
             // 根路径返回 index.html
             r.GET("/", func(c *gin.Context) {
+                c.Writer.Header().Set("Cache-Control", "no-cache")
                 c.File(filepath.Join(p, "index.html"))
+            })
+            // SPA 路由回退：非 API GET 请求兜底到 index.html
+            r.NoRoute(func(c *gin.Context) {
+                if c.Request.Method == http.MethodGet &&
+                    !strings.HasPrefix(c.Request.URL.Path, "/api/") &&
+                    !strings.HasPrefix(c.Request.URL.Path, "/v1/") {
+                    c.Writer.Header().Set("Cache-Control", "no-cache")
+                    c.File(filepath.Join(p, "index.html"))
+                    return
+                }
+                c.JSON(404, gin.H{"error": "not found"})
             })
             log.Printf("静态资源目录: %s", p)
             break
@@ -513,6 +533,13 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
     if err := json.NewDecoder(resp.Body).Decode(&preResp); err != nil {
         status.Status = "failed"
         status.Error = fmt.Sprintf("TTS预处理解析失败: %v", err)
+        return
+    }
+    // 预处理可能以 HTTP 200 + code != 0 的方式返回失败，需要显式拦截
+    if preResp.Code != 0 || preResp.ASRFormatAudioURL == "" || preResp.ReferenceAudioText == "" {
+        status.Status = "failed"
+        // 将上游 msg 透出，便于定位（典型：asr failed）
+        status.Error = fmt.Sprintf("TTS预处理失败: code=%d, msg=%s", preResp.Code, preResp.Msg)
         return
     }
     

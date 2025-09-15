@@ -15,7 +15,7 @@ services:
       - ~/heygem_data/voice/data:/root/heygem_data/voice/data
       - ~/heygem_data/face2face:/root/heygem_data/face2face
       - ~/heygem_data/face2face/result:/root/heygem_data/face2face/result
-      - /mnt/c/company:/mnt/c/company
+      - ${COMPANY_DIR:-./company}:/mnt/c/company
       - ./client/dist:/root/client/dist
     environment:
       - APP_PORT=8090
