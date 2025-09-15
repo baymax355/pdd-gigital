@@ -196,11 +196,16 @@ func handleUploadAudio(c *gin.Context) {
     dst := filepath.Join(cfg.HostVoiceDir, "ref_norm.wav")
     if err := copyFile(norm, dst); err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }
 
+    // 也拷贝一份到视频目录，便于直接驱动视频合成（自带音频链路）
+    dstVideo := filepath.Join(cfg.HostVideoDir, "ref_norm.wav")
+    if err := copyFile(norm, dstVideo); err != nil { c.JSON(500, gin.H{"error": err.Error()}); return }
+
     c.JSON(200, gin.H{
         "src": srcPath,
         "converted": norm,
         "copied_to": dst,
         "reference_audio": "ref_norm.wav",
+        "copied_to_video": dstVideo,
     })
 }
 
@@ -393,9 +398,13 @@ func handleAutoProcess(c *gin.Context) {
         Speaker:       c.PostForm("speaker"),
         Text:          c.PostForm("text"),
         CopyToCompany: c.PostForm("copy_to_company") == "true",
+        UseTTS:        true,
+    }
+    if v := c.PostForm("use_tts"); v != "" {
+        req.UseTTS = (v == "true" || v == "1" || strings.ToLower(v) == "yes")
     }
     
-    log.Printf("解析的请求参数: Speaker=%s, Text=%s, CopyToCompany=%v", req.Speaker, req.Text, req.CopyToCompany)
+    log.Printf("解析的请求参数: Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v", req.Speaker, req.Text, req.CopyToCompany, req.UseTTS)
     
     // 生成任务ID
     taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
@@ -442,6 +451,9 @@ func handleAutoProcess(c *gin.Context) {
 // 异步自动化处理函数
 func processAutomatically(ctx context.Context, taskID string, audioPath, videoPath string, req AutoProcessReq) {
     status := taskStatusMap[taskID]
+    var body []byte
+    var url string
+    var resp *http.Response
     defer func() {
         if r := recover(); r != nil {
             status.Status = "failed"
@@ -479,6 +491,13 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
         status.Error = fmt.Sprintf("音频拷贝失败: %v", err)
         return
     }
+    // 同步拷贝到视频目录，便于“自带音频”链路直接使用
+    dstInVideo := filepath.Join(cfg.HostVideoDir, "ref_norm.wav")
+    if err := copyFile(norm, dstInVideo); err != nil {
+        status.Status = "failed"
+        status.Error = fmt.Sprintf("音频拷贝到视频目录失败: %v", err)
+        return
+    }
     
     // 步骤2: 处理视频 (20%)
     status.CurrentStep = "处理视频文件"
@@ -502,122 +521,129 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
         return
     }
     
-    // 步骤3: TTS预处理 (30%)
-    status.CurrentStep = "TTS预处理"
-    status.Progress = 30
-    
-    preprocessReq := PreprocessReq{
-        Format:         "wav",
-        ReferenceAudio: "ref_norm.wav",
-        Lang:           "zh",
-    }
-    
-    body, _ := json.Marshal(preprocessReq)
-    url := fmt.Sprintf("%s/v1/preprocess_and_tran", cfg.TTSBaseURL)
-    resp, err := httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
-    if err != nil {
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS预处理失败: %v", err)
-        return
-    }
-    defer resp.Body.Close()
-    
-    if resp.StatusCode != 200 {
-        b, _ := io.ReadAll(resp.Body)
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS预处理失败: %s", string(b))
-        return
-    }
-    
-    var preResp PreprocessResp
-    if err := json.NewDecoder(resp.Body).Decode(&preResp); err != nil {
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS预处理解析失败: %v", err)
-        return
-    }
-    // 预处理可能以 HTTP 200 + code != 0 的方式返回失败，需要显式拦截
-    if preResp.Code != 0 || preResp.ASRFormatAudioURL == "" || preResp.ReferenceAudioText == "" {
-        status.Status = "failed"
-        // 将上游 msg 透出，便于定位（典型：asr failed）
-        status.Error = fmt.Sprintf("TTS预处理失败: code=%d, msg=%s", preResp.Code, preResp.Msg)
-        return
-    }
-    
-    log.Printf("TTS预处理响应: ReferenceAudio=%s, ReferenceText=%s", preResp.ASRFormatAudioURL, preResp.ReferenceAudioText)
-    
-    // 步骤4: TTS合成 (50%)
-    status.CurrentStep = "TTS语音合成"
-    status.Progress = 50
-    
-    if req.Speaker == "" { req.Speaker = "demo001" }
-    
-    // 使用map构建请求，避免结构体问题
-    ttsReq := map[string]interface{}{
-        "speaker":            req.Speaker,
-        "text":               req.Text,
-        "format":             "wav",
-        "topP":               0.7,
-        "max_new_tokens":     1024,
-        "chunk_length":       100,
-        "repetition_penalty": 1.2,
-        "temperature":        0.7,
-        "need_asr":           false,
-        "streaming":          false,
-        "is_fixed_seed":      0,
-        "is_norm":            0,
-        "reference_audio":    preResp.ASRFormatAudioURL,
-        "reference_text":     preResp.ReferenceAudioText,
-    }
-    
-    body, _ = json.Marshal(ttsReq)
-    log.Printf("TTS请求内容: %s", string(body))
-    url = fmt.Sprintf("%s/v1/invoke", cfg.TTSBaseURL)
-    resp, err = httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
-    if err != nil {
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS合成失败: %v", err)
-        return
-    }
-    defer resp.Body.Close()
-    
-    if resp.StatusCode != 200 {
-        b, _ := io.ReadAll(resp.Body)
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS合成失败: %s", string(b))
-        return
-    }
-    
-    // 保存TTS生成的音频
-    outVoice := filepath.Join(cfg.HostVoiceDir, sanitizeFilename(req.Speaker)+".wav")
-    f, err := os.Create(outVoice)
-    if err != nil {
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS音频保存失败: %v", err)
-        return
-    }
-    if _, err := io.Copy(f, resp.Body); err != nil {
+    // 如果使用自带音频，跳过 TTS 流程（稍后直接用 ref_norm.wav 作为合成音频）
+    // 否则执行 TTS 预处理 + 合成
+    audioForVideo := "ref_norm.wav" // 默认自带音频文件名
+    if req.UseTTS {
+        // 步骤3: TTS预处理 (30%)
+        status.CurrentStep = "TTS预处理"
+        status.Progress = 30
+
+        preprocessReq := PreprocessReq{
+            Format:         "wav",
+            ReferenceAudio: "ref_norm.wav",
+            Lang:           "zh",
+        }
+        
+        body, _ := json.Marshal(preprocessReq)
+        url := fmt.Sprintf("%s/v1/preprocess_and_tran", cfg.TTSBaseURL)
+        resp, err := httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
+        if err != nil {
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS预处理失败: %v", err)
+            return
+        }
+        defer resp.Body.Close()
+        
+        if resp.StatusCode != 200 {
+            b, _ := io.ReadAll(resp.Body)
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS预处理失败: %s", string(b))
+            return
+        }
+        
+        var preResp PreprocessResp
+        if err := json.NewDecoder(resp.Body).Decode(&preResp); err != nil {
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS预处理解析失败: %v", err)
+            return
+        }
+        // 预处理可能以 HTTP 200 + code != 0 的方式返回失败，需要显式拦截
+        if preResp.Code != 0 || preResp.ASRFormatAudioURL == "" || preResp.ReferenceAudioText == "" {
+            status.Status = "failed"
+            // 将上游 msg 透出，便于定位（典型：asr failed）
+            status.Error = fmt.Sprintf("TTS预处理失败: code=%d, msg=%s", preResp.Code, preResp.Msg)
+            return
+        }
+        
+        log.Printf("TTS预处理响应: ReferenceAudio=%s, ReferenceText=%s", preResp.ASRFormatAudioURL, preResp.ReferenceAudioText)
+        
+        // 步骤4: TTS合成 (50%)
+        status.CurrentStep = "TTS语音合成"
+        status.Progress = 50
+        
+        if req.Speaker == "" { req.Speaker = "demo001" }
+        
+        // 使用map构建请求，避免结构体问题
+        ttsReq := map[string]interface{}{
+            "speaker":            req.Speaker,
+            "text":               req.Text,
+            "format":             "wav",
+            "topP":               0.7,
+            "max_new_tokens":     1024,
+            "chunk_length":       100,
+            "repetition_penalty": 1.2,
+            "temperature":        0.7,
+            "need_asr":           false,
+            "streaming":          false,
+            "is_fixed_seed":      0,
+            "is_norm":            0,
+            "reference_audio":    preResp.ASRFormatAudioURL,
+            "reference_text":     preResp.ReferenceAudioText,
+        }
+        
+        body, _ = json.Marshal(ttsReq)
+        log.Printf("TTS请求内容: %s", string(body))
+        url = fmt.Sprintf("%s/v1/invoke", cfg.TTSBaseURL)
+        resp, err = httpJSON(processCtx, http.MethodPost, url, body, map[string]string{"Content-Type": "application/json"})
+        if err != nil {
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS合成失败: %v", err)
+            return
+        }
+        defer resp.Body.Close()
+        
+        if resp.StatusCode != 200 {
+            b, _ := io.ReadAll(resp.Body)
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS合成失败: %s", string(b))
+            return
+        }
+        
+        // 保存TTS生成的音频
+        outVoice := filepath.Join(cfg.HostVoiceDir, sanitizeFilename(req.Speaker)+".wav")
+        f, err := os.Create(outVoice)
+        if err != nil {
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS音频保存失败: %v", err)
+            return
+        }
+        if _, err := io.Copy(f, resp.Body); err != nil {
+            f.Close()
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS音频写入失败: %v", err)
+            return
+        }
         f.Close()
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS音频写入失败: %v", err)
-        return
-    }
-    f.Close()
-    
-    // 复制到视频目录
-    outInVideo := filepath.Join(cfg.HostVideoDir, filepath.Base(outVoice))
-    if err := copyFile(outVoice, outInVideo); err != nil {
-        status.Status = "failed"
-        status.Error = fmt.Sprintf("TTS音频拷贝失败: %v", err)
-        return
+        
+        // 复制到视频目录
+        outInVideo := filepath.Join(cfg.HostVideoDir, filepath.Base(outVoice))
+        if err := copyFile(outVoice, outInVideo); err != nil {
+            status.Status = "failed"
+            status.Error = fmt.Sprintf("TTS音频拷贝失败: %v", err)
+            return
+        }
+        // 设置将要用于视频合成的音频文件名（容器内路径拼接时只需要文件名）
+        audioForVideo = filepath.Base(outVoice)
     }
     
     // 步骤5: 视频合成提交 (70%)
     status.CurrentStep = "提交视频合成任务"
     status.Progress = 70
-    
+
     taskCode := fmt.Sprintf("auto-%s", taskID)
     payload := map[string]any{
-        "audio_url": filepath.Join(cfg.ContainerDataRoot, filepath.Base(outVoice)),
+        "audio_url": filepath.Join(cfg.ContainerDataRoot, audioForVideo),
         "video_url": filepath.Join(cfg.ContainerDataRoot, "silent.mp4"),
         "code":       taskCode,
         "chaofen":    0,

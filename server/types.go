@@ -44,6 +44,7 @@ type AutoProcessReq struct {
     Speaker         string `json:"speaker"`
     Text            string `json:"text"`
     CopyToCompany   bool   `json:"copy_to_company"`
+    UseTTS          bool   `json:"use_tts"`
 }
 
 // 自动化处理状态
@@ -59,4 +60,3 @@ type AutoProcessStatus struct {
     EndTime         int64  `json:"end_time,omitempty"` // 结束时间戳
     TotalDuration   int64  `json:"total_duration,omitempty"` // 总耗时(秒)
 }
-

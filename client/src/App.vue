@@ -26,18 +26,22 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">要合成的文本</label>
-            <textarea v-model="autoText" placeholder="请输入要合成的文本..." class="w-full border rounded px-3 py-2 h-20"></textarea>
+            <textarea v-model="autoText" :disabled="!autoUseTTS" placeholder="当使用自带音频时可留空" class="w-full border rounded px-3 py-2 h-20"></textarea>
           </div>
         </div>
         
         <div class="flex items-center gap-4">
+          <label class="flex items-center">
+            <input type="checkbox" v-model="autoUseTTS" class="mr-2" />
+            <span class="text-sm">使用 TTS 合成（关闭则使用自带音频）</span>
+          </label>
           <label class="flex items-center">
             <input type="checkbox" v-model="autoCopyToCompany" class="mr-2" />
             <span class="text-sm">拷贝到Windows目录</span>
           </label>
         </div>
         
-        <button type="submit" :disabled="!autoAudioFile || !autoVideoFile || !autoText" 
+        <button type="submit" :disabled="!autoAudioFile || !autoVideoFile || (autoUseTTS && !autoText)" 
                 class="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
           开始全自动处理
         </button>
@@ -168,6 +172,7 @@ const autoVideoFile = ref(null)
 const autoSpeaker = ref('demo001')
 const autoText = ref('')
 const autoCopyToCompany = ref(false)
+const autoUseTTS = ref(true)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
 
@@ -250,6 +255,7 @@ async function startAutoProcess(){
   fd.append('speaker', autoSpeaker.value)
   fd.append('text', autoText.value)
   fd.append('copy_to_company', String(autoCopyToCompany.value))
+  fd.append('use_tts', String(autoUseTTS.value))
   
   try {
     const r = await fetch('/api/auto/process', { method: 'POST', body: fd })
@@ -311,4 +317,3 @@ onMounted(refreshFiles)
 
 <style scoped>
 </style>
-
