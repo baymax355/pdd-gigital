@@ -143,14 +143,6 @@
       </div>
     </section>
 
-    <div class="flex items-center justify-between text-sm text-gray-600">
-      <span>手动流程仅在需要逐步调试或单独执行某个环节时使用。</span>
-      <button type="button" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50" @click="showManualSteps = !showManualSteps">
-        {{ showManualSteps ? '收起手动流程' : '展开手动流程' }}
-      </button>
-    </div>
-
-    <template v-if="showManualSteps">
     <!-- 任务队列与批量下载 -->
     <section class="bg-white p-4 rounded shadow space-y-3">
       <div class="flex items-center justify-between">
@@ -195,6 +187,14 @@
       </div>
     </section>
 
+    <div class="flex items-center justify-between text-sm text-gray-600">
+      <span>以下步骤适合调试或手动执行单个环节，默认隐藏。</span>
+      <button type="button" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50" @click="showManualSteps = !showManualSteps">
+        {{ showManualSteps ? '收起手动流程' : '展开手动流程' }}
+      </button>
+    </div>
+
+    <template v-if="showManualSteps">
     <section class="bg-white p-4 rounded shadow space-y-3">
       <h2 class="font-semibold">1) 音频上传与标准化</h2>
       <form @submit.prevent="uploadAudio" class="flex items-center gap-3 flex-wrap">
