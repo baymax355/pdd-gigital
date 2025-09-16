@@ -43,7 +43,7 @@ func main() {
 		api.POST("/upload/audio", handleUploadAudio)
 		api.POST("/upload/video", handleUploadVideo)
 
-		api.GET("/templates", handleTemplateInfo)
+		api.GET("/templates", handleTemplateList)
 		api.POST("/templates/audio", handleUploadAudioTemplate)
 		api.POST("/templates/video", handleUploadVideoTemplate)
 
@@ -564,12 +564,12 @@ func startQueueWorker() {
 // /api/auto/process: 全自动化处理接口
 func handleAutoProcess(c *gin.Context) {
 	req := AutoProcessReq{
-		Speaker:          c.PostForm("speaker"),
-		Text:             c.PostForm("text"),
-		CopyToCompany:    parseBool(c.PostForm("copy_to_company")),
-		UseTTS:           true,
-		UseAudioTemplate: parseBool(c.PostForm("use_audio_template")),
-		UseVideoTemplate: parseBool(c.PostForm("use_video_template")),
+		Speaker:           c.PostForm("speaker"),
+		Text:              c.PostForm("text"),
+		CopyToCompany:     parseBool(c.PostForm("copy_to_company")),
+		UseTTS:            true,
+		AudioTemplateName: strings.TrimSpace(c.PostForm("audio_template_name")),
+		VideoTemplateName: strings.TrimSpace(c.PostForm("video_template_name")),
 	}
 	if v := c.PostForm("use_tts"); v != "" {
 		req.UseTTS = parseBool(v)
@@ -581,41 +581,39 @@ func handleAutoProcess(c *gin.Context) {
 		err       error
 	)
 
-	if !req.UseAudioTemplate {
+	var audioTemplatePath string
+	if req.AudioTemplateName != "" {
+		_, path, err := findTemplateItem(templateKindAudio, req.AudioTemplateName)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("音频模版无效: %v", err)})
+			return
+		}
+		audioTemplatePath = path
+	} else {
 		audioFile, err = c.FormFile("audio")
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少音频文件 audio"})
-			return
-		}
-	} else {
-		if _, err := os.Stat(audioTemplatePath()); err != nil {
-			if os.IsNotExist(err) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "音频模板不存在，请先上传"})
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取音频模板失败: %v", err)})
-			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少音频文件或模版"})
 			return
 		}
 	}
 
-	if !req.UseVideoTemplate {
+	var videoTemplatePath string
+	if req.VideoTemplateName != "" {
+		_, path, err := findTemplateItem(templateKindVideo, req.VideoTemplateName)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("视频模版无效: %v", err)})
+			return
+		}
+		videoTemplatePath = path
+	} else {
 		videoFile, err = c.FormFile("video")
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少视频文件 video"})
-			return
-		}
-	} else {
-		if _, err := os.Stat(videoTemplatePath()); err != nil {
-			if os.IsNotExist(err) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "视频模板不存在，请先上传"})
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取视频模板失败: %v", err)})
-			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少视频文件或模版"})
 			return
 		}
 	}
 
-	log.Printf("解析的请求参数: Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, UseAudioTemplate=%v, UseVideoTemplate=%v", req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.UseAudioTemplate, req.UseVideoTemplate)
+	log.Printf("解析的请求参数: Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
 
 	taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
 	status := &AutoProcessStatus{
@@ -628,9 +626,9 @@ func handleAutoProcess(c *gin.Context) {
 	taskStatusMap[taskID] = status
 
 	var audioPath string
-	if req.UseAudioTemplate {
-		audioPath = audioTemplatePath()
-		log.Printf("使用音频模板: %s", audioPath)
+	if audioTemplatePath != "" {
+		audioPath = audioTemplatePath
+		log.Printf("使用音频模版: %s", audioPath)
 	} else {
 		log.Printf("开始保存音频文件: %s", audioFile.Filename)
 		audioPath, err = saveMultipartFile(audioFile, filepath.Join(cfg.WorkDir, "upload"), "ref.wav")
@@ -645,9 +643,9 @@ func handleAutoProcess(c *gin.Context) {
 	}
 
 	var videoPath string
-	if req.UseVideoTemplate {
-		videoPath = videoTemplatePath()
-		log.Printf("使用视频模板: %s", videoPath)
+	if videoTemplatePath != "" {
+		videoPath = videoTemplatePath
+		log.Printf("使用视频模版: %s", videoPath)
 	} else {
 		log.Printf("开始保存视频文件: %s", videoFile.Filename)
 		videoPath, err = saveMultipartFile(videoFile, filepath.Join(cfg.WorkDir, "upload"), "video.mp4")
@@ -676,118 +674,127 @@ func handleAutoProcess(c *gin.Context) {
 }
 
 func handleUploadAudioTemplate(c *gin.Context) {
-	file, err := c.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少音频文件 file"})
-		return
-	}
-
-	tmpPath, err := saveMultipartFile(file, templateDir(), file.Filename)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("音频模板暂存失败: %v", err)})
-		return
-	}
-	if tmpPath != audioTemplatePath() {
-		defer os.Remove(tmpPath)
-	}
-
-	finalPath := audioTemplatePath()
-	ctx := c.Request.Context()
-	_, stderr, err := run(ctx, "ffmpeg", "-y", "-i", tmpPath,
-		"-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", finalPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("音频模板转换失败: %v | %s", err, stderr)})
-		return
-	}
-
-	meta := TemplateMeta{OriginalName: file.Filename, UpdatedAt: time.Now().Unix()}
-	if err := saveTemplateMeta("audio", meta); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("音频模板信息保存失败: %v", err)})
-		return
-	}
-
-	info := TemplateInfo{Exists: true, OriginalName: meta.OriginalName, UpdatedAt: meta.UpdatedAt}
-	c.JSON(200, gin.H{"message": "音频模板已更新", "info": info})
+	uploadTemplateWithName(c, templateKindAudio)
 }
 
 func handleUploadVideoTemplate(c *gin.Context) {
-	file, err := c.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少视频文件 file"})
-		return
-	}
-
-	tmpPath, err := saveMultipartFile(file, templateDir(), file.Filename)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("视频模板暂存失败: %v", err)})
-		return
-	}
-	if tmpPath != videoTemplatePath() {
-		defer os.Remove(tmpPath)
-	}
-
-	finalPath := videoTemplatePath()
-	ctx := c.Request.Context()
-	_, stderr, err := run(ctx, "ffmpeg", "-y", "-i", tmpPath, "-c:v", "copy", "-c:a", "copy", finalPath)
-	if err != nil {
-		log.Printf("视频模板快速转封装失败，尝试重新编码: %v | %s", err, stderr)
-		_, stderr, err = run(ctx, "ffmpeg", "-y", "-i", tmpPath,
-			"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-			"-c:a", "aac", "-b:a", "192k", finalPath)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("视频模板转换失败: %v | %s", err, stderr)})
-			return
-		}
-	}
-
-	meta := TemplateMeta{OriginalName: file.Filename, UpdatedAt: time.Now().Unix()}
-	if err := saveTemplateMeta("video", meta); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("视频模板信息保存失败: %v", err)})
-		return
-	}
-
-	info := TemplateInfo{Exists: true, OriginalName: meta.OriginalName, UpdatedAt: meta.UpdatedAt}
-	c.JSON(200, gin.H{"message": "视频模板已更新", "info": info})
+	uploadTemplateWithName(c, templateKindVideo)
 }
 
-func handleTemplateInfo(c *gin.Context) {
-	audioInfo := TemplateInfo{Exists: false}
-	if st, err := os.Stat(audioTemplatePath()); err == nil {
-		audioInfo.Exists = true
-		if meta, err := loadTemplateMeta("audio"); err == nil {
-			audioInfo.OriginalName = meta.OriginalName
-			audioInfo.UpdatedAt = meta.UpdatedAt
-		}
-		if audioInfo.OriginalName == "" {
-			audioInfo.OriginalName = filepath.Base(audioTemplatePath())
-		}
-		if audioInfo.UpdatedAt == 0 {
-			audioInfo.UpdatedAt = st.ModTime().Unix()
-		}
-	} else if !os.IsNotExist(err) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取音频模板信息失败: %v", err)})
+func uploadTemplateWithName(c *gin.Context, kind string) {
+	name := strings.TrimSpace(c.PostForm("name"))
+	if name == "" {
+		name = strings.TrimSpace(c.PostForm("template_name"))
+	}
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写模版名称 name"})
 		return
 	}
 
-	videoInfo := TemplateInfo{Exists: false}
-	if st, err := os.Stat(videoTemplatePath()); err == nil {
-		videoInfo.Exists = true
-		if meta, err := loadTemplateMeta("video"); err == nil {
-			videoInfo.OriginalName = meta.OriginalName
-			videoInfo.UpdatedAt = meta.UpdatedAt
-		}
-		if videoInfo.OriginalName == "" {
-			videoInfo.OriginalName = filepath.Base(videoTemplatePath())
-		}
-		if videoInfo.UpdatedAt == 0 {
-			videoInfo.UpdatedAt = st.ModTime().Unix()
-		}
-	} else if !os.IsNotExist(err) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取视频模板信息失败: %v", err)})
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少模版文件 file"})
 		return
 	}
 
-	c.JSON(200, gin.H{"audio": audioInfo, "video": videoInfo})
+	sanitized := sanitizeTemplateKey(name)
+	displayName := name
+	if err := ensureTemplateKindDir(kind); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	tmpDir := filepath.Join(cfg.WorkDir, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	tmpName := sanitized + filepath.Ext(file.Filename)
+	tmpPath, err := saveMultipartFile(file, tmpDir, tmpName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("模版暂存失败: %v", err)})
+		return
+	}
+	defer os.Remove(tmpPath)
+
+	finalPath, err := templateFilePath(kind, sanitized)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	switch kind {
+	case templateKindAudio:
+		_, stderr, err := run(ctx, "ffmpeg", "-y", "-i", tmpPath,
+			"-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", finalPath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("音频模版转换失败: %v | %s", err, stderr)})
+			return
+		}
+	case templateKindVideo:
+		_, stderr, err := run(ctx, "ffmpeg", "-y", "-i", tmpPath, "-c:v", "copy", "-c:a", "copy", finalPath)
+		if err != nil {
+			log.Printf("视频模版快速转封装失败，尝试重新编码: %v | %s", err, stderr)
+			_, stderr, err = run(ctx, "ffmpeg", "-y", "-i", tmpPath,
+				"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+				"-c:a", "aac", "-b:a", "192k", finalPath)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("视频模版转换失败: %v | %s", err, stderr)})
+				return
+			}
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的模版类型"})
+		return
+	}
+
+	item := TemplateItem{
+		Name:         sanitized,
+		DisplayName:  displayName,
+		OriginalName: file.Filename,
+		Kind:         kind,
+		UpdatedAt:    time.Now().Unix(),
+	}
+	if err := upsertTemplateItem(kind, item); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("模版信息保存失败: %v", err)})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "模版已更新", "template": item})
+}
+
+func handleTemplateList(c *gin.Context) {
+	kind := strings.TrimSpace(c.Query("kind"))
+	switch kind {
+	case "", templateKindAudio, templateKindVideo:
+		// ok
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind 仅支持 audio|video"})
+		return
+	}
+
+	if kind == "" {
+		audio, err := listTemplates(templateKindAudio)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		video, err := listTemplates(templateKindVideo)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"audio": audio, "video": video})
+		return
+	}
+
+	items, err := listTemplates(kind)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{kind: items})
 }
 
 func parseBool(v string) bool {

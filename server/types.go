@@ -41,12 +41,12 @@ type SubmitVideoReq struct {
 
 // 自动化处理请求
 type AutoProcessReq struct {
-	Speaker          string `json:"speaker"`
-	Text             string `json:"text"`
-	CopyToCompany    bool   `json:"copy_to_company"`
-	UseTTS           bool   `json:"use_tts"`
-	UseAudioTemplate bool   `json:"use_audio_template"`
-	UseVideoTemplate bool   `json:"use_video_template"`
+	Speaker           string `json:"speaker"`
+	Text              string `json:"text"`
+	CopyToCompany     bool   `json:"copy_to_company"`
+	UseTTS            bool   `json:"use_tts"`
+	AudioTemplateName string `json:"audio_template_name"`
+	VideoTemplateName string `json:"video_template_name"`
 }
 
 // 自动化处理状态
@@ -63,13 +63,10 @@ type AutoProcessStatus struct {
 	TotalDuration int64  `json:"total_duration,omitempty"` // 总耗时(秒)
 }
 
-type TemplateMeta struct {
+type TemplateItem struct {
+	Name         string `json:"name"`
+	DisplayName  string `json:"display_name"`
 	OriginalName string `json:"original_name"`
+	Kind         string `json:"kind"`
 	UpdatedAt    int64  `json:"updated_at"`
-}
-
-type TemplateInfo struct {
-	Exists       bool   `json:"exists"`
-	OriginalName string `json:"original_name,omitempty"`
-	UpdatedAt    int64  `json:"updated_at,omitempty"`
 }
