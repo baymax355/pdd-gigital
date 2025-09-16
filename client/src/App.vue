@@ -9,13 +9,49 @@
       
       <form @submit.prevent="startAutoProcess" class="space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">音频文件</label>
-            <input type="file" accept="audio/*" @change="onAutoAudioPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">音频文件</label>
+              <input type="file" accept="audio/*" :disabled="autoUseAudioTemplate" @change="onAutoAudioPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-60" />
+            </div>
+            <div class="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2 text-sm text-gray-700">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <label class="inline-flex items-center gap-2">
+                  <input type="checkbox" v-model="autoUseAudioTemplate" class="rounded border-gray-300" />
+                  <span>使用音频模版</span>
+                </label>
+                <span v-if="templates.audio.exists" class="text-xs text-gray-500">
+                  当前模版：{{ templates.audio.original_name || 'audio_template.wav' }} · {{ formatTimestamp(templates.audio.updated_at) }}
+                </span>
+                <span v-else class="text-xs text-amber-600">暂无音频模版</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="uploadAudioTemplate" class="block text-xs text-amber-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 hover:file:bg-amber-200 disabled:opacity-60" />
+                <span v-if="audioTemplateMessage" :class="audioTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ audioTemplateMessage }}</span>
+              </div>
+            </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">视频文件</label>
-            <input type="file" accept="video/*" @change="onAutoVideoPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          <div class="space-y-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">视频文件</label>
+              <input type="file" accept="video/*" :disabled="autoUseVideoTemplate" @change="onAutoVideoPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-60" />
+            </div>
+            <div class="rounded-lg border border-sky-200 bg-sky-50/60 p-3 space-y-2 text-sm text-gray-700">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <label class="inline-flex items-center gap-2">
+                  <input type="checkbox" v-model="autoUseVideoTemplate" class="rounded border-gray-300" />
+                  <span>使用视频模版</span>
+                </label>
+                <span v-if="templates.video.exists" class="text-xs text-gray-500">
+                  当前模版：{{ templates.video.original_name || 'video_template.mp4' }} · {{ formatTimestamp(templates.video.updated_at) }}
+                </span>
+                <span v-else class="text-xs text-sky-600">暂无视频模版</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="uploadVideoTemplate" class="block text-xs text-sky-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 hover:file:bg-sky-200 disabled:opacity-60" />
+                <span v-if="videoTemplateMessage" :class="videoTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ videoTemplateMessage }}</span>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -41,7 +77,7 @@
           </label>
         </div>
         
-        <button type="submit" :disabled="isUploading || !autoAudioFile || !autoVideoFile || (autoUseTTS && !autoText)" 
+        <button type="submit" :disabled="autoSubmitDisabled" 
                 class="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
           开始全自动处理
         </button>
@@ -211,7 +247,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 
 const audioFile = ref(null)
 const videoFile = ref(null)
@@ -241,8 +277,21 @@ const autoSpeaker = ref('demo001')
 const autoText = ref('')
 const autoCopyToCompany = ref(false)
 const autoUseTTS = ref(true)
+const autoUseAudioTemplate = ref(false)
+const autoUseVideoTemplate = ref(false)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
+
+const templates = ref({
+  audio: { exists: false, original_name: '', updated_at: 0 },
+  video: { exists: false, original_name: '', updated_at: 0 }
+})
+const isUploadingAudioTemplate = ref(false)
+const isUploadingVideoTemplate = ref(false)
+const audioTemplateMessage = ref('')
+const videoTemplateMessage = ref('')
+const audioTemplateMessageType = ref('success')
+const videoTemplateMessageType = ref('success')
 
 // 上传进度
 const isUploading = ref(false)
@@ -250,6 +299,34 @@ const uploadPercent = ref(0)
 const uploadAudioPercent = ref(0)
 const uploadVideoPercent = ref(0)
 const uploadError = ref('')
+
+const autoSubmitDisabled = computed(() => {
+  if (isUploading.value) return true
+  if (autoUseAudioTemplate.value) {
+    if (!templates.value.audio?.exists) return true
+  } else if (!autoAudioFile.value) {
+    return true
+  }
+  if (autoUseVideoTemplate.value) {
+    if (!templates.value.video?.exists) return true
+  } else if (!autoVideoFile.value) {
+    return true
+  }
+  if (autoUseTTS.value && !autoText.value) return true
+  return false
+})
+
+watch(autoUseAudioTemplate, (val) => {
+  if (val) {
+    autoAudioFile.value = null
+  }
+})
+
+watch(autoUseVideoTemplate, (val) => {
+  if (val) {
+    autoVideoFile.value = null
+  }
+})
 
 // 队列列表和批量下载
 const taskList = ref([])
@@ -259,8 +336,76 @@ let tasksTimer = null
 function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
 function onVideoPick(e){ videoFile.value = e.target.files?.[0] }
 
-function onAutoAudioPick(e){ autoAudioFile.value = e.target.files?.[0] }
-function onAutoVideoPick(e){ autoVideoFile.value = e.target.files?.[0] }
+function onAutoAudioPick(e){
+  autoAudioFile.value = e.target.files?.[0]
+  if (autoAudioFile.value) {
+    autoUseAudioTemplate.value = false
+  }
+}
+function onAutoVideoPick(e){
+  autoVideoFile.value = e.target.files?.[0]
+  if (autoVideoFile.value) {
+    autoUseVideoTemplate.value = false
+  }
+}
+
+async function uploadAudioTemplate(e){
+  const file = e.target.files?.[0]
+  if (!file) return
+  audioTemplateMessage.value = ''
+  audioTemplateMessageType.value = 'success'
+  isUploadingAudioTemplate.value = true
+  const fd = new FormData()
+  fd.append('file', file)
+  try {
+    const resp = await fetch('/api/templates/audio', { method: 'POST', body: fd })
+    const data = await resp.json().catch(() => ({}))
+    if (!resp.ok || data.error) {
+      throw new Error(data.error || `HTTP ${resp.status}`)
+    }
+    templates.value.audio = data.info || { exists: true, original_name: file.name, updated_at: Math.floor(Date.now() / 1000) }
+    audioTemplateMessage.value = '音频模版上传成功'
+    audioTemplateMessageType.value = 'success'
+    autoUseAudioTemplate.value = true
+    autoAudioFile.value = null
+  } catch (err) {
+    console.error('音频模版上传失败', err)
+    audioTemplateMessage.value = `音频模版上传失败：${err?.message || err}`
+    audioTemplateMessageType.value = 'error'
+  } finally {
+    isUploadingAudioTemplate.value = false
+    e.target.value = ''
+  }
+}
+
+async function uploadVideoTemplate(e){
+  const file = e.target.files?.[0]
+  if (!file) return
+  videoTemplateMessage.value = ''
+  videoTemplateMessageType.value = 'success'
+  isUploadingVideoTemplate.value = true
+  const fd = new FormData()
+  fd.append('file', file)
+  try {
+    const resp = await fetch('/api/templates/video', { method: 'POST', body: fd })
+    const data = await resp.json().catch(() => ({}))
+    if (!resp.ok || data.error) {
+      throw new Error(data.error || `HTTP ${resp.status}`)
+    }
+    templates.value.video = data.info || { exists: true, original_name: file.name, updated_at: Math.floor(Date.now() / 1000) }
+    videoTemplateMessage.value = '视频模版上传成功'
+    videoTemplateMessageType.value = 'success'
+    autoUseVideoTemplate.value = true
+    autoVideoFile.value = null
+  } catch (err) {
+    console.error('视频模版上传失败', err)
+    videoTemplateMessage.value = `视频模版上传失败：${err?.message || err}`
+    videoTemplateMessageType.value = 'error'
+  } finally {
+    isUploadingVideoTemplate.value = false
+    e.target.value = ''
+  }
+}
 
 async function uploadAudio(){
   const fd = new FormData()
@@ -327,27 +472,65 @@ async function refreshFiles(){
   if(!selAudio.value) selAudio.value = files.value.video.find(f => f.endsWith('.wav')) || ''
 }
 
+async function fetchTemplates(){
+  try {
+    const resp = await fetch('/api/templates')
+    const data = await resp.json()
+    templates.value.audio = data.audio || { exists: false, original_name: '', updated_at: 0 }
+    templates.value.video = data.video || { exists: false, original_name: '', updated_at: 0 }
+    if (templates.value.audio.exists) {
+      if (!autoAudioFile.value) autoUseAudioTemplate.value = true
+    } else if (autoUseAudioTemplate.value) {
+      autoUseAudioTemplate.value = false
+    }
+    if (templates.value.video.exists) {
+      if (!autoVideoFile.value) autoUseVideoTemplate.value = true
+    } else if (autoUseVideoTemplate.value) {
+      autoUseVideoTemplate.value = false
+    }
+  } catch (err) {
+    console.error('获取模版信息失败', err)
+  }
+}
+
 // 自动化处理函数
 async function startAutoProcess(){
-  if (!autoAudioFile.value || !autoVideoFile.value) return
+  if (autoUseAudioTemplate.value && !templates.value.audio?.exists) {
+    audioTemplateMessage.value = '请先上传音频模版'
+    audioTemplateMessageType.value = 'error'
+    return
+  }
+  if (autoUseVideoTemplate.value && !templates.value.video?.exists) {
+    videoTemplateMessage.value = '请先上传视频模版'
+    videoTemplateMessageType.value = 'error'
+    return
+  }
+  if (!autoUseAudioTemplate.value && !autoAudioFile.value) return
+  if (!autoUseVideoTemplate.value && !autoVideoFile.value) return
 
   const fd = new FormData()
-  fd.append('audio', autoAudioFile.value)
-  fd.append('video', autoVideoFile.value)
+  if (!autoUseAudioTemplate.value && autoAudioFile.value) {
+    fd.append('audio', autoAudioFile.value)
+  }
+  if (!autoUseVideoTemplate.value && autoVideoFile.value) {
+    fd.append('video', autoVideoFile.value)
+  }
   fd.append('speaker', autoSpeaker.value)
   fd.append('text', autoText.value)
   fd.append('copy_to_company', String(autoCopyToCompany.value))
   fd.append('use_tts', String(autoUseTTS.value))
+  fd.append('use_audio_template', String(autoUseAudioTemplate.value))
+  fd.append('use_video_template', String(autoUseVideoTemplate.value))
 
   // 使用 XHR 以便拿到上传进度
   isUploading.value = true
-  uploadPercent.value = 0
-  uploadAudioPercent.value = 0
-  uploadVideoPercent.value = 0
+  uploadPercent.value = (autoUseAudioTemplate.value && autoUseVideoTemplate.value) ? 100 : 0
+  uploadAudioPercent.value = autoUseAudioTemplate.value ? 100 : 0
+  uploadVideoPercent.value = autoUseVideoTemplate.value ? 100 : 0
   uploadError.value = ''
 
-  const audioSize = autoAudioFile.value?.size || 0
-  const videoSize = autoVideoFile.value?.size || 0
+  const audioSize = autoUseAudioTemplate.value ? 0 : (autoAudioFile.value?.size || 0)
+  const videoSize = autoUseVideoTemplate.value ? 0 : (autoVideoFile.value?.size || 0)
 
   const xhr = new XMLHttpRequest()
   xhr.open('POST', '/api/auto/process', true)
@@ -424,6 +607,14 @@ async function pollAutoStatus(){
 }
 
 // 格式化耗时显示
+function formatTimestamp(ts) {
+  if (!ts) return '未更新'
+  const d = new Date(ts * 1000)
+  if (Number.isNaN(d.getTime())) return '未更新'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function formatDuration(seconds) {
   if (!seconds) return '计算中...'
   
@@ -442,6 +633,7 @@ function formatDuration(seconds) {
 
 onMounted(() => {
   refreshFiles()
+  fetchTemplates()
   refreshTasks()
   tasksTimer = setInterval(refreshTasks, 5000)
 })
