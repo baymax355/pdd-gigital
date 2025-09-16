@@ -67,15 +67,9 @@
           </div>
         </div>
         
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">说话人ID</label>
-            <input v-model="autoSpeaker" placeholder="demo001" class="w-full border rounded px-3 py-2" />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">要合成的文本</label>
-            <textarea v-model="autoText" :disabled="!autoUseTTS" placeholder="当使用自带音频时可留空" class="w-full border rounded px-3 py-2 h-20"></textarea>
-          </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">要合成的文本</label>
+          <textarea v-model="autoText" :disabled="!autoUseTTS" placeholder="当使用自带音频时可留空" class="w-full border rounded px-3 py-2 h-20"></textarea>
         </div>
         
         <div class="flex items-center gap-4">
@@ -149,6 +143,14 @@
       </div>
     </section>
 
+    <div class="flex items-center justify-between text-sm text-gray-600">
+      <span>手动流程仅在需要逐步调试或单独执行某个环节时使用。</span>
+      <button type="button" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50" @click="showManualSteps = !showManualSteps">
+        {{ showManualSteps ? '收起手动流程' : '展开手动流程' }}
+      </button>
+    </div>
+
+    <template v-if="showManualSteps">
     <!-- 任务队列与批量下载 -->
     <section class="bg-white p-4 rounded shadow space-y-3">
       <div class="flex items-center justify-between">
@@ -255,6 +257,7 @@
       </div>
       <div v-if="resultResp" class="text-sm text-slate-600">结果: {{ resultResp.result }} <span v-if="resultResp.copied_to_company"> => {{ resultResp.copied_to_company }}</span></div>
     </section>
+    </template>
   </div>
 </template>
 
@@ -283,14 +286,15 @@ const copyToCompany = ref(false)
 const resultResp = ref(null)
 
 // 自动化处理相关
+const DEFAULT_SPEAKER_ID = 'demo001'
 const autoAudioFile = ref(null)
 const autoVideoFile = ref(null)
-const autoSpeaker = ref('demo001')
 const autoText = ref('')
 const autoCopyToCompany = ref(false)
 const autoUseTTS = ref(true)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
+const showManualSteps = ref(false)
 
 const audioTemplates = ref([])
 const videoTemplates = ref([])
@@ -558,7 +562,7 @@ async function startAutoProcess(){
   } else if (autoVideoFile.value) {
     fd.append('video', autoVideoFile.value)
   }
-  fd.append('speaker', autoSpeaker.value)
+  fd.append('speaker', DEFAULT_SPEAKER_ID)
   fd.append('text', autoText.value)
   fd.append('copy_to_company', String(autoCopyToCompany.value))
   fd.append('use_tts', String(autoUseTTS.value))
