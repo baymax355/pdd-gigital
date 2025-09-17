@@ -21,14 +21,21 @@
                 <button type="button" class="px-2 py-1 text-xs rounded border border-amber-300 text-amber-700 bg-white hover:bg-amber-100" @click="fetchTemplates">刷新列表</button>
               </div>
               <div class="flex flex-wrap items-center gap-2 text-sm">
+                <input
+                  v-model="audioTemplateSearch"
+                  type="search"
+                  placeholder="搜索模版"
+                  class="border rounded px-2 py-1 text-sm min-w-[10rem]"
+                />
                 <select v-model="selectedAudioTemplate" class="border rounded px-2 py-1 text-sm">
                   <option value="">不使用模版</option>
-                  <option v-for="tpl in audioTemplates" :key="tpl.name" :value="tpl.name">
+                  <option v-for="tpl in filteredAudioTemplates" :key="tpl.name" :value="tpl.name">
                     {{ tpl.display_name || tpl.name }}（更新 {{ formatTimestamp(tpl.updated_at) }}）
                   </option>
                 </select>
                 <span v-if="selectedAudioTemplateInfo" class="text-xs text-gray-500">已选：{{ selectedAudioTemplateInfo.display_name || selectedAudioTemplateInfo.name }}</span>
               </div>
+              <p v-if="audioTemplates.length && filteredAudioTemplates.length === 0" class="text-xs text-amber-600">未找到匹配的音频模版</p>
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <input v-model="newAudioTemplateName" placeholder="模版名称" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
                 <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="uploadAudioTemplate" class="block text-xs text-amber-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 hover:file:bg-amber-200 disabled:opacity-60" />
@@ -49,14 +56,21 @@
                 <button type="button" class="px-2 py-1 text-xs rounded border border-sky-300 text-sky-700 bg-white hover:bg-sky-100" @click="fetchTemplates">刷新列表</button>
               </div>
               <div class="flex flex-wrap items-center gap-2 text-sm">
+                <input
+                  v-model="videoTemplateSearch"
+                  type="search"
+                  placeholder="搜索模版"
+                  class="border rounded px-2 py-1 text-sm min-w-[10rem]"
+                />
                 <select v-model="selectedVideoTemplate" class="border rounded px-2 py-1 text-sm">
                   <option value="">不使用模版</option>
-                  <option v-for="tpl in videoTemplates" :key="tpl.name" :value="tpl.name">
+                  <option v-for="tpl in filteredVideoTemplates" :key="tpl.name" :value="tpl.name">
                     {{ tpl.display_name || tpl.name }}（更新 {{ formatTimestamp(tpl.updated_at) }}）
                   </option>
                 </select>
                 <span v-if="selectedVideoTemplateInfo" class="text-xs text-gray-500">已选：{{ selectedVideoTemplateInfo.display_name || selectedVideoTemplateInfo.name }}</span>
               </div>
+              <p v-if="videoTemplates.length && filteredVideoTemplates.length === 0" class="text-xs text-sky-600">未找到匹配的视频模版</p>
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <input v-model="newVideoTemplateName" placeholder="模版名称" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
                 <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="uploadVideoTemplate" class="block text-xs text-sky-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 hover:file:bg-sky-200 disabled:opacity-60" />
@@ -298,6 +312,8 @@ const showManualSteps = ref(false)
 
 const audioTemplates = ref([])
 const videoTemplates = ref([])
+const audioTemplateSearch = ref('')
+const videoTemplateSearch = ref('')
 const selectedAudioTemplate = ref('')
 const selectedVideoTemplate = ref('')
 const newAudioTemplateName = ref('')
@@ -352,6 +368,38 @@ watch(autoVideoFile, (file) => {
 
 const selectedAudioTemplateInfo = computed(() => audioTemplates.value.find(t => t.name === selectedAudioTemplate.value) || null)
 const selectedVideoTemplateInfo = computed(() => videoTemplates.value.find(t => t.name === selectedVideoTemplate.value) || null)
+const filteredAudioTemplates = computed(() => {
+  const keyword = audioTemplateSearch.value.trim().toLowerCase()
+  const list = audioTemplates.value
+  if (!keyword) return list
+  const filtered = list.filter((tpl) => {
+    const names = [tpl.display_name, tpl.name, tpl.original_name].filter(Boolean).map((n) => String(n).toLowerCase())
+    return names.some((n) => n.includes(keyword))
+  })
+  if (selectedAudioTemplate.value) {
+    const current = list.find((tpl) => tpl.name === selectedAudioTemplate.value)
+    if (current && !filtered.some((tpl) => tpl.name === current.name)) {
+      return [current, ...filtered]
+    }
+  }
+  return filtered
+})
+const filteredVideoTemplates = computed(() => {
+  const keyword = videoTemplateSearch.value.trim().toLowerCase()
+  const list = videoTemplates.value
+  if (!keyword) return list
+  const filtered = list.filter((tpl) => {
+    const names = [tpl.display_name, tpl.name, tpl.original_name].filter(Boolean).map((n) => String(n).toLowerCase())
+    return names.some((n) => n.includes(keyword))
+  })
+  if (selectedVideoTemplate.value) {
+    const current = list.find((tpl) => tpl.name === selectedVideoTemplate.value)
+    if (current && !filtered.some((tpl) => tpl.name === current.name)) {
+      return [current, ...filtered]
+    }
+  }
+  return filtered
+})
 
 // 队列列表和批量下载
 const taskList = ref([])
