@@ -15,6 +15,7 @@ trap 'echo "❌ 启动失败，请查看上方日志。"; exit 1' ERR
 MODE="web"
 REBUILD=0
 SKIP_BUILD=0
+GPU_PROFILE="default"
 
 for arg in "$@"; do
   case "$arg" in
@@ -24,8 +25,10 @@ for arg in "$@"; do
       SKIP_BUILD=1 ;;
     --rebuild)
       REBUILD=1 ;;
+    50|gpu50|--gpu50|--gpu=50|--gpu-profile=50)
+      GPU_PROFILE="50" ;;
     -h|--help)
-      echo "用法: ./start.sh [web|all] [--skip-build] [--rebuild]"; exit 0 ;;
+      echo "用法: ./start.sh [web|all] [--skip-build] [--rebuild] [50]"; exit 0 ;;
     *)
       echo "⚠️ 未知参数: $arg" ;;
   esac
@@ -51,7 +54,12 @@ else
   echo "⏭️ 跳过前端构建"
 fi
 
-DC="docker-compose -f docker-compose-linux.yml"
+if [[ "$GPU_PROFILE" == "50" ]]; then
+  echo "🧩 使用 50 系 GPU 配置 (docker-compose-5090.yml)..."
+  DC="docker-compose -f docker-compose-linux.yml -f docker-compose-5090.yml"
+else
+  DC="docker-compose -f docker-compose-linux.yml"
+fi
 
 # 可选重建镜像
 if [[ "$REBUILD" -eq 1 ]]; then
