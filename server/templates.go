@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -24,8 +26,12 @@ func templateKindDir(kind string) string {
 	return filepath.Join(templateDir(), kind)
 }
 
-func templateMetadataPath(kind string) string {
-	return filepath.Join(templateKindDir(kind), "metadata.json")
+func templateRedisKey(kind string) string {
+	base := strings.TrimSpace(cfg.QueuePrefix)
+	if base == "" {
+		base = "digital_people"
+	}
+	return fmt.Sprintf("%s:templates:%s", base, kind)
 }
 
 func templateFileExt(kind string) string {
@@ -62,13 +68,20 @@ func sanitizeTemplateKey(name string) string {
 }
 
 func loadTemplateList(kind string) ([]TemplateItem, error) {
-	path := templateMetadataPath(kind)
-	data, err := os.ReadFile(path)
+	if redisClient == nil {
+		return nil, fmt.Errorf("Redis 未初始化")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	data, err := redisClient.Get(ctx, templateRedisKey(kind)).Bytes()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if err == redis.Nil {
 			return []TemplateItem{}, nil
 		}
 		return nil, err
+	}
+	if len(data) == 0 {
+		return []TemplateItem{}, nil
 	}
 	var items []TemplateItem
 	if err := json.Unmarshal(data, &items); err != nil {
@@ -87,7 +100,12 @@ func saveTemplateList(kind string, items []TemplateItem) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(templateMetadataPath(kind), data, 0o644)
+	if redisClient == nil {
+		return fmt.Errorf("Redis 未初始化")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return redisClient.Set(ctx, templateRedisKey(kind), data, 0).Err()
 }
 
 func templateFilePath(kind, name string) (string, error) {
