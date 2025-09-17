@@ -11,18 +11,32 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
-var cfg Config
+var (
+	cfg             Config
+	rabbitConn      *amqp.Connection
+	rabbitChannel   *amqp.Channel
+	rabbitQueueName string
+	redisClient     *redis.Client
+)
 
 func main() {
 	cfg = loadConfig()
+	if err := initRedis(); err != nil {
+		log.Fatalf("初始化 Redis 失败: %v", err)
+	}
+	if err := initRabbitMQ(); err != nil {
+		log.Fatalf("初始化 RabbitMQ 失败: %v", err)
+	}
 
 	if err := ensureFFmpeg(); err != nil {
 		log.Printf("警告: %v (请确保运行环境已安装 ffmpeg)", err)
@@ -528,17 +542,178 @@ func handleVideoResult(c *gin.Context) {
 }
 
 // 全局任务状态存储
-var taskStatusMap = make(map[string]*AutoProcessStatus)
+var (
+	taskStatusMu  sync.RWMutex
+	taskStatusMap = make(map[string]*AutoProcessStatus)
+)
 
 type queuedTask struct {
-	taskID    string
-	audioPath string
-	videoPath string
-	req       AutoProcessReq
+	TaskID    string         `json:"task_id"`
+	AudioPath string         `json:"audio_path"`
+	VideoPath string         `json:"video_path"`
+	Req       AutoProcessReq `json:"req"`
 }
 
-var taskQueue = make(chan queuedTask, 100)
 var queueStarted bool
+
+func initRedis() error {
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("连接 Redis 失败: %w", err)
+	}
+	return nil
+}
+
+func initRabbitMQ() error {
+	conn, err := amqp.Dial(cfg.RabbitURL)
+	if err != nil {
+		return fmt.Errorf("连接 RabbitMQ 失败: %w", err)
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("创建 RabbitMQ channel 失败: %w", err)
+	}
+	queueName := fmt.Sprintf("%s_tasks", cfg.QueuePrefix)
+	if _, err := ch.QueueDeclare(queueName, true, false, false, false, nil); err != nil {
+		ch.Close()
+		conn.Close()
+		return fmt.Errorf("声明 RabbitMQ 队列失败: %w", err)
+	}
+	if err := ch.Qos(1, 0, false); err != nil {
+		ch.Close()
+		conn.Close()
+		return fmt.Errorf("设置 RabbitMQ Qos 失败: %w", err)
+	}
+	rabbitConn = conn
+	rabbitChannel = ch
+	rabbitQueueName = queueName
+	return nil
+}
+
+func redisTaskStatusKey(taskID string) string {
+	return fmt.Sprintf("%s:task:%s", cfg.QueuePrefix, taskID)
+}
+
+func redisTaskIndexKey() string {
+	return fmt.Sprintf("%s:task_ids", cfg.QueuePrefix)
+}
+
+func persistTaskStatus(status *AutoProcessStatus) {
+	if status == nil || redisClient == nil {
+		return
+	}
+	data, err := json.Marshal(status)
+	if err != nil {
+		log.Printf("序列化任务状态失败: %v", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := redisClient.Set(ctx, redisTaskStatusKey(status.TaskID), data, 0).Err(); err != nil {
+		log.Printf("写入 Redis 任务状态失败: %v", err)
+	}
+}
+
+func loadTaskStatus(taskID string) (*AutoProcessStatus, error) {
+	if redisClient == nil {
+		return nil, fmt.Errorf("Redis 未初始化")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := redisClient.Get(ctx, redisTaskStatusKey(taskID)).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var status AutoProcessStatus
+	if err := json.Unmarshal(res, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func addTaskToIndex(taskID string, start int64) {
+	if redisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := redisClient.ZAdd(ctx, redisTaskIndexKey(), redis.Z{
+		Score:  float64(start),
+		Member: taskID,
+	}).Err(); err != nil {
+		log.Printf("写入任务索引失败: %v", err)
+	}
+}
+
+func listTaskStatuses() ([]*AutoProcessStatus, error) {
+	if redisClient == nil {
+		return nil, fmt.Errorf("Redis 未初始化")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ids, err := redisClient.ZRevRange(ctx, redisTaskIndexKey(), 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*AutoProcessStatus, 0, len(ids))
+	for _, id := range ids {
+		status, err := loadTaskStatus(id)
+		if err != nil {
+			log.Printf("读取任务状态失败(%s): %v", id, err)
+			continue
+		}
+		if status != nil {
+			result = append(result, status)
+		}
+	}
+	return result, nil
+}
+
+func publishTask(t queuedTask) error {
+	if rabbitChannel == nil {
+		return fmt.Errorf("RabbitMQ 未初始化")
+	}
+	body, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return rabbitChannel.PublishWithContext(ctx, "", rabbitQueueName, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		Body:         body,
+		DeliveryMode: amqp.Persistent,
+	})
+}
+
+func getOrCreateTaskStatus(taskID string) *AutoProcessStatus {
+	taskStatusMu.RLock()
+	status, ok := taskStatusMap[taskID]
+	taskStatusMu.RUnlock()
+	if ok {
+		return status
+	}
+	status, err := loadTaskStatus(taskID)
+	if err != nil {
+		log.Printf("从 Redis 加载任务状态失败(%s): %v", taskID, err)
+	}
+	if status == nil {
+		status = &AutoProcessStatus{TaskID: taskID}
+	}
+	taskStatusMu.Lock()
+	taskStatusMap[taskID] = status
+	taskStatusMu.Unlock()
+	return status
+}
 
 func startQueueWorker() {
 	if queueStarted {
@@ -546,17 +721,43 @@ func startQueueWorker() {
 	}
 	queueStarted = true
 	go func() {
-		log.Printf("任务队列工作线程已启动，容量=%d", cap(taskQueue))
-		for t := range taskQueue {
-			st := taskStatusMap[t.taskID]
-			if st != nil {
-				st.Status = "processing"
-				st.CurrentStep = "排队完成，开始处理"
-				st.Progress = 5
-				st.StartTime = time.Now().Unix()
+		for {
+			if rabbitChannel == nil {
+				log.Printf("RabbitMQ 通道未就绪，3 秒后重试...")
+				time.Sleep(3 * time.Second)
+				continue
 			}
-			// 使用新的背景上下文处理，串行执行
-			processAutomatically(context.Background(), t.taskID, t.audioPath, t.videoPath, t.req)
+			msgs, err := rabbitChannel.Consume(rabbitQueueName, "", false, false, false, false, nil)
+			if err != nil {
+				log.Printf("RabbitMQ 消费初始化失败: %v", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			log.Printf("任务队列工作线程已启动，监听队列=%s", rabbitQueueName)
+			for msg := range msgs {
+				var t queuedTask
+				if err := json.Unmarshal(msg.Body, &t); err != nil {
+					log.Printf("解析任务消息失败: %v", err)
+					msg.Nack(false, false)
+					continue
+				}
+				status := getOrCreateTaskStatus(t.TaskID)
+				if status.StartTime == 0 {
+					status.StartTime = time.Now().Unix()
+				}
+				status.Status = "processing"
+				status.CurrentStep = "排队完成，开始处理"
+				if status.Progress < 5 {
+					status.Progress = 5
+				}
+				persistTaskStatus(status)
+				processAutomatically(context.Background(), t.TaskID, t.AudioPath, t.VideoPath, t.Req)
+				if err := msg.Ack(false); err != nil {
+					log.Printf("确认 RabbitMQ 消息失败: %v", err)
+				}
+			}
+			log.Printf("RabbitMQ 消费通道已关闭，5 秒后重试...")
+			time.Sleep(5 * time.Second)
 		}
 	}()
 }
@@ -623,7 +824,11 @@ func handleAutoProcess(c *gin.Context) {
 		Progress:    0,
 		StartTime:   time.Now().Unix(),
 	}
+	taskStatusMu.Lock()
 	taskStatusMap[taskID] = status
+	taskStatusMu.Unlock()
+	addTaskToIndex(taskID, status.StartTime)
+	persistTaskStatus(status)
 
 	var audioPath string
 	if audioTemplatePath != "" {
@@ -636,6 +841,7 @@ func handleAutoProcess(c *gin.Context) {
 			log.Printf("音频保存失败: %v", err)
 			status.Status = "failed"
 			status.Error = fmt.Sprintf("音频上传失败: %v", err)
+			persistTaskStatus(status)
 			c.JSON(500, gin.H{"error": status.Error})
 			return
 		}
@@ -653,6 +859,7 @@ func handleAutoProcess(c *gin.Context) {
 			log.Printf("视频保存失败: %v", err)
 			status.Status = "failed"
 			status.Error = fmt.Sprintf("视频上传失败: %v", err)
+			persistTaskStatus(status)
 			c.JSON(500, gin.H{"error": status.Error})
 			return
 		}
@@ -661,11 +868,11 @@ func handleAutoProcess(c *gin.Context) {
 
 	status.Status = "queued"
 	status.CurrentStep = "等待排队执行"
-	select {
-	case taskQueue <- queuedTask{taskID: taskID, audioPath: audioPath, videoPath: videoPath, req: req}:
-	default:
+	persistTaskStatus(status)
+	if err := publishTask(queuedTask{TaskID: taskID, AudioPath: audioPath, VideoPath: videoPath, Req: req}); err != nil {
 		status.Status = "failed"
-		status.Error = "任务队列已满，请稍后重试"
+		status.Error = fmt.Sprintf("任务入队失败: %v", err)
+		persistTaskStatus(status)
 		c.JSON(503, gin.H{"error": status.Error})
 		return
 	}
@@ -808,7 +1015,7 @@ func parseBool(v string) bool {
 
 // 异步自动化处理函数
 func processAutomatically(ctx context.Context, taskID string, audioPath, videoPath string, req AutoProcessReq) {
-	status := taskStatusMap[taskID]
+	status := getOrCreateTaskStatus(taskID)
 	var body []byte
 	var url string
 	var resp *http.Response
@@ -823,6 +1030,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 			status.EndTime = time.Now().Unix()
 			status.TotalDuration = status.EndTime - status.StartTime
 		}
+		persistTaskStatus(status)
 	}()
 
 	// 创建新的上下文，避免HTTP请求上下文被取消
@@ -831,6 +1039,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	// 步骤1: 处理音频 (10%)
 	status.CurrentStep = "处理音频文件"
 	status.Progress = 10
+	persistTaskStatus(status)
 
 	// 直接转换音频格式: MP3/其他格式 -> WAV (16kHz单声道)
 	work := filepath.Join(cfg.WorkDir, "audio")
@@ -865,6 +1074,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	// 步骤2: 处理视频 (20%)
 	status.CurrentStep = "处理视频文件"
 	status.Progress = 20
+	persistTaskStatus(status)
 
 	// 视频静音处理
 	silentPath := filepath.Join(cfg.WorkDir, "video", "silent.mp4")
@@ -891,6 +1101,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 		// 步骤3: TTS预处理 (30%)
 		status.CurrentStep = "TTS预处理"
 		status.Progress = 30
+		persistTaskStatus(status)
 
 		preprocessReq := PreprocessReq{
 			Format:         "wav",
@@ -934,6 +1145,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 		// 步骤4: TTS合成 (50%)
 		status.CurrentStep = "TTS语音合成"
 		status.Progress = 50
+		persistTaskStatus(status)
 
 		if req.Speaker == "" {
 			req.Speaker = "demo001"
@@ -1005,6 +1217,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	// 步骤5: 视频合成提交 (70%)
 	status.CurrentStep = "提交视频合成任务"
 	status.Progress = 70
+	persistTaskStatus(status)
 
 	taskCode := fmt.Sprintf("auto-%s", taskID)
 	payload := map[string]any{
@@ -1036,6 +1249,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	// 步骤6: 轮询视频合成结果 (70-100%)
 	status.CurrentStep = "等待视频合成完成"
 	status.Progress = 80
+	persistTaskStatus(status)
 
 	// 开始轮询，间隔30秒
 	ticker := time.NewTicker(30 * time.Second)
@@ -1053,6 +1267,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 
 			// 更新状态信息
 			status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟)", checkCount, checkCount/2)
+			persistTaskStatus(status)
 
 			// 优先通过宿主机挂载目录检测结果文件，避免依赖 docker 命令
 			resultName := fmt.Sprintf("%s-r.mp4", taskCode)
@@ -1195,6 +1410,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 					// 视频生成完成
 					status.CurrentStep = "下载最终视频"
 					status.Progress = 95
+					persistTaskStatus(status)
 
 					// 拷贝到结果目录 - 带重试和完整性检查
 					hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", taskCode))
@@ -1374,6 +1590,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 			// 更新进度
 			if status.Progress < 90 {
 				status.Progress += 2
+				persistTaskStatus(status)
 			}
 
 		case <-timeout:
@@ -1390,37 +1607,41 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 // /api/auto/status/:taskId: 查询自动化处理状态
 func handleAutoStatus(c *gin.Context) {
 	taskID := c.Param("taskId")
-	status, exists := taskStatusMap[taskID]
-	if !exists {
-		c.JSON(404, gin.H{"error": "任务不存在"})
+	status, err := loadTaskStatus(taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取任务状态失败: %v", err)})
+		return
+	}
+	if status == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
 		return
 	}
 
-	c.JSON(200, status)
+	c.JSON(http.StatusOK, status)
 }
 
 // 列出所有任务状态（按开始时间倒序）
 func handleAutoTasks(c *gin.Context) {
-	list := make([]*AutoProcessStatus, 0, len(taskStatusMap))
-	for _, v := range taskStatusMap {
-		list = append(list, v)
+	statuses, err := listTaskStatuses()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取任务列表失败: %v", err)})
+		return
 	}
-	// 简单排序：按 StartTime 倒序
-	sort.Slice(list, func(i, j int) bool { return list[i].StartTime > list[j].StartTime })
-	c.JSON(200, gin.H{"tasks": list})
+	// Redis 已按 StartTime 排序（倒序）
+	c.JSON(http.StatusOK, gin.H{"tasks": statuses})
 }
 
 // 打包下载：GET /api/auto/archive?task_ids=id1,id2 或 /api/auto/archive?all=1
 func handleAutoArchive(c *gin.Context) {
 	// 收集要打包的文件
 	var files []string
+	var statuses []*AutoProcessStatus
 	if c.Query("all") == "1" || strings.ToLower(c.Query("all")) == "true" {
-		for _, st := range taskStatusMap {
-			if st.Status == "completed" && st.ResultPath != "" {
-				if _, err := os.Stat(st.ResultPath); err == nil {
-					files = append(files, st.ResultPath)
-				}
-			}
+		var err error
+		statuses, err = listTaskStatuses()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取任务列表失败: %v", err)})
+			return
 		}
 	} else {
 		ids := strings.Split(c.Query("task_ids"), ",")
@@ -1429,15 +1650,25 @@ func handleAutoArchive(c *gin.Context) {
 			if id == "" {
 				continue
 			}
-			if st, ok := taskStatusMap[id]; ok && st.Status == "completed" && st.ResultPath != "" {
-				if _, err := os.Stat(st.ResultPath); err == nil {
-					files = append(files, st.ResultPath)
-				}
+			st, err := loadTaskStatus(id)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取任务状态失败: %v", err)})
+				return
+			}
+			if st != nil {
+				statuses = append(statuses, st)
+			}
+		}
+	}
+	for _, st := range statuses {
+		if st.Status == "completed" && st.ResultPath != "" {
+			if _, err := os.Stat(st.ResultPath); err == nil {
+				files = append(files, st.ResultPath)
 			}
 		}
 	}
 	if len(files) == 0 {
-		c.JSON(400, gin.H{"error": "没有可打包的完成视频"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有可打包的完成视频"})
 		return
 	}
 
