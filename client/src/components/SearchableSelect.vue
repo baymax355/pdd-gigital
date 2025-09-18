@@ -1,8 +1,8 @@
 <template>
-  <div ref="wrapper" class="relative inline-block w-full">
+  <div ref="wrapperRef" class="relative inline-block w-full">
     <div class="relative">
       <input
-        ref="input"
+        ref="inputRef"
         type="text"
         :placeholder="placeholder"
         :disabled="disabled"
