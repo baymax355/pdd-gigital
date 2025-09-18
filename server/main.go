@@ -906,10 +906,6 @@ func uploadTemplateWithName(c *gin.Context, kind string) {
 	if name == "" {
 		name = strings.TrimSpace(c.PostForm("template_name"))
 	}
-	if name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写模版名称 name"})
-		return
-	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -917,8 +913,17 @@ func uploadTemplateWithName(c *gin.Context, kind string) {
 		return
 	}
 
+	originalBase := strings.TrimSuffix(file.Filename, filepath.Ext(file.Filename))
+	if name == "" {
+		name = originalBase
+	}
+
+	displayName := strings.TrimSpace(name)
+	if displayName == "" {
+		displayName = originalBase
+	}
+
 	sanitized := sanitizeTemplateKey(name)
-	displayName := name
 	if err := ensureTemplateKindDir(kind); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

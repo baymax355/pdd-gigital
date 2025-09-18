@@ -46,7 +46,7 @@
                 <span v-if="selectedAudioTemplateInfo" class="text-xs text-gray-500">已选：{{ selectedAudioTemplateInfo.display_name || selectedAudioTemplateInfo.name }}</span>
               </div>
               <div class="flex flex-wrap items-center gap-2 text-xs">
-                <input v-model="newAudioTemplateName" placeholder="模版名称" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
+                <input v-model="newAudioTemplateName" placeholder="模版名称（可选）" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
                 <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="uploadAudioTemplate" class="block text-xs text-amber-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 hover:file:bg-amber-200 disabled:opacity-60" />
                 <span v-if="audioTemplateMessage" :class="audioTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ audioTemplateMessage }}</span>
               </div>
@@ -78,7 +78,7 @@
                 <span v-if="selectedVideoTemplateInfo" class="text-xs text-gray-500">已选：{{ selectedVideoTemplateInfo.display_name || selectedVideoTemplateInfo.name }}</span>
               </div>
               <div class="flex flex-wrap items-center gap-2 text-xs">
-                <input v-model="newVideoTemplateName" placeholder="模版名称" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
+                <input v-model="newVideoTemplateName" placeholder="模版名称（可选）" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
                 <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="uploadVideoTemplate" class="block text-xs text-sky-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 hover:file:bg-sky-200 disabled:opacity-60" />
                 <span v-if="videoTemplateMessage" :class="videoTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ videoTemplateMessage }}</span>
               </div>
@@ -444,6 +444,15 @@ function sanitizeTaskNameLocal(name) {
   return normalized
 }
 
+function deriveTemplateNameFromFile(filename) {
+  if (!filename) {
+    return `template-${Date.now()}`
+  }
+  const base = filename.replace(/\.[^.]+$/, '')
+  const sanitized = sanitizeTaskNameLocal(base)
+  return sanitized || `template-${Date.now()}`
+}
+
 function taskDurationSeconds(task) {
   if (!task) return 0
   if ((task.status === 'completed' || task.status === 'failed') && task.total_duration) {
@@ -492,17 +501,12 @@ function onAutoVideoPick(e){
 async function uploadAudioTemplate(e){
   const file = e.target.files?.[0]
   if (!file) return
-  if (!newAudioTemplateName.value.trim()) {
-    audioTemplateMessage.value = '请先填写模版名称'
-    audioTemplateMessageType.value = 'error'
-    e.target.value = ''
-    return
-  }
   audioTemplateMessage.value = ''
   audioTemplateMessageType.value = 'success'
   isUploadingAudioTemplate.value = true
   const fd = new FormData()
-  fd.append('name', newAudioTemplateName.value.trim())
+  const templateName = newAudioTemplateName.value.trim() || deriveTemplateNameFromFile(file.name)
+  fd.append('name', templateName)
   fd.append('file', file)
   try {
     const resp = await fetch('/api/templates/audio', { method: 'POST', body: fd })
@@ -532,17 +536,12 @@ async function uploadAudioTemplate(e){
 async function uploadVideoTemplate(e){
   const file = e.target.files?.[0]
   if (!file) return
-  if (!newVideoTemplateName.value.trim()) {
-    videoTemplateMessage.value = '请先填写模版名称'
-    videoTemplateMessageType.value = 'error'
-    e.target.value = ''
-    return
-  }
   videoTemplateMessage.value = ''
   videoTemplateMessageType.value = 'success'
   isUploadingVideoTemplate.value = true
   const fd = new FormData()
-  fd.append('name', newVideoTemplateName.value.trim())
+  const templateName = newVideoTemplateName.value.trim() || deriveTemplateNameFromFile(file.name)
+  fd.append('name', templateName)
   fd.append('file', file)
   try {
     const resp = await fetch('/api/templates/video', { method: 'POST', body: fd })
