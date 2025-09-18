@@ -5,10 +5,7 @@
       <div class="bg-white p-6 rounded shadow max-w-md">
         <div class="mb-3">
           <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
-          <select v-model="loginUsername" class="border rounded px-3 py-2 w-full">
-            <option disabled value="">请选择用户名</option>
-            <option v-for="u in loginUsers" :key="u" :value="u">{{ u }}</option>
-          </select>
+          <input v-model="loginUsername" type="text" class="border rounded px-3 py-2 w-full" placeholder="请输入用户名" />
         </div>
         <div class="mb-4">
           <label class="block text-sm font-medium text-gray-700 mb-2">密码</label>
@@ -328,7 +325,6 @@ import SearchableSelect from './components/SearchableSelect.vue'
 
 // 登录相关
 const currentUser = ref('')
-const loginUsers = ref([])
 const loginUsername = ref('')
 const loginPassword = ref('')
 const loginLoading = ref(false)
@@ -346,14 +342,6 @@ async function fetchMe() {
   } catch (e) {
     currentUser.value = ''
   }
-}
-
-async function fetchLoginUsers() {
-  try {
-    const r = await fetch('/api/auth/users')
-    const j = await r.json()
-    loginUsers.value = j.users || []
-  } catch (e) { /* ignore */ }
 }
 
 async function login() {
@@ -388,7 +376,6 @@ async function login() {
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' })
   currentUser.value = ''
-  await fetchLoginUsers()
 }
 
 const audioFile = ref(null)
@@ -949,7 +936,6 @@ function formatDuration(seconds) {
 
 onMounted(async () => {
   await fetchMe()
-  await fetchLoginUsers()
   if (currentUser.value) {
     refreshFiles()
     fetchTemplates()

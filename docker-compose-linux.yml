@@ -18,6 +18,8 @@ services:
       - ~/heygem_data/workdir:/root/data
       - ${COMPANY_DIR:-./company}:/mnt/c/company
       - ./client/dist:/root/client/dist
+      # 直接使用仓库内的 users.json（优先于上面的 /root/data 挂载）
+      - ./server/data/users.json:/root/data/users.json:ro
     environment:
       - APP_PORT=8090
       - HOST_VOICE_DIR=/root/heygem_data/voice/data
