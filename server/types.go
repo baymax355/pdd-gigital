@@ -47,11 +47,13 @@ type AutoProcessReq struct {
 	UseTTS            bool   `json:"use_tts"`
 	AudioTemplateName string `json:"audio_template_name"`
 	VideoTemplateName string `json:"video_template_name"`
+	TaskName          string `json:"task_name"`
 }
 
 // 自动化处理状态
 type AutoProcessStatus struct {
 	TaskID        string `json:"task_id"`
+	TaskName      string `json:"task_name,omitempty"`
 	Status        string `json:"status"` // "processing", "completed", "failed"
 	CurrentStep   string `json:"current_step"`
 	Progress      int    `json:"progress"` // 0-100

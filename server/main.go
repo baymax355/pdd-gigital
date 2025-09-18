@@ -776,6 +776,18 @@ func handleAutoProcess(c *gin.Context) {
 		req.UseTTS = parseBool(v)
 	}
 
+	rawTaskName := strings.TrimSpace(c.PostForm("task_name"))
+	if rawTaskName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写任务名称"})
+		return
+	}
+	taskName := sanitizeTaskName(rawTaskName)
+	if taskName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "任务名称包含非法字符，请重新输入"})
+		return
+	}
+	req.TaskName = taskName
+
 	var (
 		audioFile *multipart.FileHeader
 		videoFile *multipart.FileHeader
@@ -814,11 +826,12 @@ func handleAutoProcess(c *gin.Context) {
 		}
 	}
 
-	log.Printf("解析的请求参数: Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
+	log.Printf("解析的请求参数: TaskName=%s, Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.TaskName, req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
 
 	taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
 	status := &AutoProcessStatus{
 		TaskID:      taskID,
+		TaskName:    req.TaskName,
 		Status:      "processing",
 		CurrentStep: "上传文件",
 		Progress:    0,
@@ -877,7 +890,7 @@ func handleAutoProcess(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, gin.H{"task_id": taskID, "status": "started"})
+	c.JSON(200, gin.H{"task_id": taskID, "status": "started", "task_name": req.TaskName})
 }
 
 func handleUploadAudioTemplate(c *gin.Context) {
@@ -1016,6 +1029,12 @@ func parseBool(v string) bool {
 // 异步自动化处理函数
 func processAutomatically(ctx context.Context, taskID string, audioPath, videoPath string, req AutoProcessReq) {
 	status := getOrCreateTaskStatus(taskID)
+	if req.TaskName == "" {
+		req.TaskName = fmt.Sprintf("task-%s", taskID)
+	}
+	if status.TaskName == "" {
+		status.TaskName = req.TaskName
+	}
 	var body []byte
 	var url string
 	var resp *http.Response
@@ -1219,7 +1238,14 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	status.Progress = 70
 	persistTaskStatus(status)
 
-	taskCode := fmt.Sprintf("auto-%s", taskID)
+	taskCode := req.TaskName
+	if taskCode == "" {
+		taskCode = fmt.Sprintf("task-%s", taskID)
+	}
+	status.TaskName = taskCode
+	containerResultName := fmt.Sprintf("%s-r.mp4", taskCode)
+	resultFilename := fmt.Sprintf("%s.mp4", taskCode)
+	containerResultPath := filepath.Join(cfg.ContainerDataRoot, "temp", containerResultName)
 	payload := map[string]any{
 		"audio_url":        filepath.Join(cfg.ContainerDataRoot, audioForVideo),
 		"video_url":        filepath.Join(cfg.ContainerDataRoot, "silent.mp4"),
@@ -1267,16 +1293,16 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 		case <-ticker.C:
 			checkCount++
 			// 检查视频是否生成完成
-			inside := filepath.Join(cfg.ContainerDataRoot, "temp", fmt.Sprintf("%s-r.mp4", taskCode))
+			inside := containerResultPath
 
 			// 更新状态信息
 			status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟，最多等待约 %.1f 分钟)", checkCount, checkCount/2, maxWait.Minutes())
 			persistTaskStatus(status)
 
 			// 优先通过宿主机挂载目录检测结果文件，避免依赖 docker 命令
-			resultName := fmt.Sprintf("%s-r.mp4", taskCode)
+			resultName := containerResultName
 			srcOnHost := filepath.Join(cfg.HostVideoDir, "temp", resultName)
-			hostOut := filepath.Join(cfg.HostResultDir, resultName)
+			hostOut := filepath.Join(cfg.HostResultDir, resultFilename)
 			if st, err := os.Stat(srcOnHost); err == nil && !st.IsDir() {
 				log.Printf("检测到结果文件: %s (size=%d)", srcOnHost, st.Size())
 				// 等待大小稳定（连续3次相同，每次间隔3s）
@@ -1329,7 +1355,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 					}
 					// 可选拷贝到公司目录
 					if req.CopyToCompany {
-						companyOut := filepath.Join(cfg.WindowsCompanyDir, resultName)
+						companyOut := filepath.Join(cfg.WindowsCompanyDir, resultFilename)
 						log.Printf("复制到公司目录: %s", companyOut)
 						if err := copyFile(hostOut, companyOut); err != nil {
 							log.Printf("拷贝到公司目录失败: %v", err)
@@ -1339,7 +1365,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 					status.Status = "completed"
 					status.CurrentStep = "处理完成"
 					status.Progress = 100
-					status.ResultVideo = resultName
+					status.ResultVideo = resultFilename
 					status.ResultPath = hostOut
 					status.EndTime = time.Now().Unix()
 					status.TotalDuration = status.EndTime - status.StartTime
@@ -1417,7 +1443,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 					persistTaskStatus(status)
 
 					// 拷贝到结果目录 - 带重试和完整性检查
-					hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", taskCode))
+					hostOut := filepath.Join(cfg.HostResultDir, resultFilename)
 					if err := os.MkdirAll(filepath.Dir(hostOut), 0o755); err != nil {
 						status.Status = "failed"
 						status.Error = fmt.Sprintf("创建结果目录失败: %v", err)
@@ -1558,7 +1584,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 
 					// 可选拷贝到Windows目录 - 直接从容器复制，避免使用被截断的文件
 					if req.CopyToCompany {
-						companyOut := filepath.Join(cfg.WindowsCompanyDir, fmt.Sprintf("%s-r.mp4", taskCode))
+						companyOut := filepath.Join(cfg.WindowsCompanyDir, resultFilename)
 						companyCmd := fmt.Sprintf("docker cp %s:%s %s", cfg.GenVideoContainer, inside, companyOut)
 						log.Printf("执行Windows拷贝命令: %s", companyCmd)
 
@@ -1580,7 +1606,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 					status.Status = "completed"
 					status.CurrentStep = "处理完成"
 					status.Progress = 100
-					status.ResultVideo = fmt.Sprintf("%s-r.mp4", taskCode)
+					status.ResultVideo = resultFilename
 					status.ResultPath = hostOut
 					status.EndTime = time.Now().Unix()
 					status.TotalDuration = status.EndTime - status.StartTime

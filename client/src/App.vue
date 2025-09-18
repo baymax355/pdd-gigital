@@ -8,6 +8,18 @@
       <p class="text-green-700 mb-4">只需上传音频和视频文件，系统将自动完成整个处理流程</p>
       
       <form @submit.prevent="startAutoProcess" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">任务名称</label>
+          <input
+            v-model="autoTaskName"
+            type="text"
+            placeholder="填写任务名称"
+            class="block w-full text-sm border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+          />
+          <p v-if="taskNameError" class="text-xs text-red-600 mt-1">{{ taskNameError }}</p>
+          <p v-else-if="taskNamePreview" class="text-xs text-gray-500 mt-1">最终将保存为：{{ taskNamePreview }}</p>
+          <p class="text-xs text-gray-400 mt-1">仅支持中文、字母、数字、下划线和中划线，空格将自动替换为下划线。</p>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="space-y-3">
             <div>
@@ -132,6 +144,7 @@
           <div class="w-full bg-gray-200 rounded-full h-2">
             <div class="bg-green-600 h-2 rounded-full transition-all duration-300" :style="{ width: autoStatus.progress + '%' }"></div>
           </div>
+          <div v-if="autoStatus.task_name" class="text-sm text-gray-600">任务名称：{{ autoStatus.task_name }}</div>
           <div v-if="autoStatus.status === 'completed'" class="text-green-600 font-medium">
             ✅ 处理完成！视频文件：{{ autoStatus.result_video }}
             <div class="text-sm text-gray-600 mt-1">
@@ -167,6 +180,7 @@
             <tr class="text-left border-b">
               <th class="p-2">选择</th>
               <th class="p-2">任务ID</th>
+              <th class="p-2">任务名</th>
               <th class="p-2">状态</th>
               <th class="p-2">进度</th>
               <th class="p-2">当前步骤</th>
@@ -181,6 +195,7 @@
                 <input type="checkbox" :disabled="t.status !== 'completed'" :value="t.task_id" v-model="selectedTaskIds" />
               </td>
               <td class="p-2 whitespace-nowrap">{{ t.task_id }}</td>
+              <td class="p-2 whitespace-nowrap">{{ t.task_name || '-' }}</td>
               <td class="p-2">{{ t.status }}</td>
               <td class="p-2">{{ t.progress }}%</td>
               <td class="p-2">{{ t.current_step }}</td>
@@ -296,6 +311,7 @@ const resultResp = ref(null)
 
 // 自动化处理相关
 const DEFAULT_SPEAKER_ID = 'demo001'
+const autoTaskName = ref('')
 const autoAudioFile = ref(null)
 const autoVideoFile = ref(null)
 const autoText = ref('')
@@ -304,6 +320,9 @@ const autoUseTTS = ref(true)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
 const showManualSteps = ref(false)
+const taskNameError = ref('')
+const sanitizedTaskName = computed(() => sanitizeTaskNameLocal(autoTaskName.value))
+const taskNamePreview = computed(() => (sanitizedTaskName.value ? `${sanitizedTaskName.value}.mp4` : ''))
 
 const audioTemplates = ref([])
 const videoTemplates = ref([])
@@ -332,12 +351,19 @@ const autoSubmitDisabled = computed(() => {
   if (!hasAudioSource) return true
   if (!hasVideoSource) return true
   if (autoUseTTS.value && !autoText.value) return true
+  if (!sanitizedTaskName.value) return true
   return false
 })
 
 watch(selectedAudioTemplate, (val) => {
   if (val) {
     autoAudioFile.value = null
+  }
+})
+
+watch(autoTaskName, () => {
+  if (taskNameError.value) {
+    taskNameError.value = ''
   }
 })
 
@@ -380,6 +406,17 @@ function templateSubLabel(tpl) {
     }
   }
   return parts.join(' · ')
+}
+
+function sanitizeTaskNameLocal(name) {
+  const trimmed = (name || '').trim()
+  if (!trimmed) return ''
+  let normalized = trimmed.replace(/\s+/g, '_')
+  normalized = normalized.replace(/[^A-Za-z0-9_\-\u4e00-\u9fff]/g, '_')
+  normalized = normalized.replace(/_+/g, '_')
+  normalized = normalized.replace(/^[_-]+/, '')
+  normalized = normalized.replace(/[_-]+$/, '')
+  return normalized
 }
 
 // 队列列表和批量下载
@@ -580,6 +617,18 @@ async function startAutoProcess(){
     return
   }
 
+  const trimmedTaskName = autoTaskName.value.trim()
+  if (!trimmedTaskName) {
+    taskNameError.value = '请填写任务名称'
+    return
+  }
+  const finalTaskName = sanitizedTaskName.value
+  if (!finalTaskName) {
+    taskNameError.value = '任务名称包含非法字符，请重新输入'
+    return
+  }
+  taskNameError.value = ''
+
   const fd = new FormData()
   if (usingAudioTemplate) {
     fd.append('audio_template_name', selectedAudioTemplate.value)
@@ -591,6 +640,7 @@ async function startAutoProcess(){
   } else if (autoVideoFile.value) {
     fd.append('video', autoVideoFile.value)
   }
+  fd.append('task_name', finalTaskName)
   fd.append('speaker', DEFAULT_SPEAKER_ID)
   fd.append('text', autoText.value)
   fd.append('copy_to_company', String(autoCopyToCompany.value))
@@ -647,7 +697,8 @@ async function startAutoProcess(){
       }
       if (result.task_id) {
         autoTaskId.value = result.task_id
-        autoStatus.value = { status: 'queued', current_step: '等待排队执行', progress: 0 }
+        const serverTaskName = result.task_name || finalTaskName
+        autoStatus.value = { status: 'queued', current_step: '等待排队执行', progress: 0, task_name: serverTaskName }
         pollAutoStatus()
       } else {
         uploadError.value = '未返回任务ID'
