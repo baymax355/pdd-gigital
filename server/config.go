@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -21,6 +23,7 @@ type Config struct {
 	QueuePrefix       string
 	RedisAddr         string
 	RedisPassword     string
+	VideoWaitTimeout  time.Duration
 }
 
 func getenv(key, def string) string {
@@ -48,6 +51,14 @@ func loadConfig() Config {
 		RedisAddr:         getenv("REDIS_ADDR", "192.168.7.29:6379"),
 		RedisPassword:     getenv("REDIS_PASSWORD", ""),
 	}
+
+	timeoutMinutes := 10
+	if v := os.Getenv("AUTO_VIDEO_TIMEOUT_MINUTES"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	}
+	cfg.VideoWaitTimeout = time.Duration(timeoutMinutes) * time.Minute
 
 	mustMkdirAll(cfg.WorkDir)
 	mustMkdirAll(cfg.HostVoiceDir)

@@ -1255,7 +1255,11 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(30 * time.Minute) // 30分钟超时
+	maxWait := cfg.VideoWaitTimeout
+	if maxWait <= 0 {
+		maxWait = 10 * time.Minute
+	}
+	timeout := time.After(maxWait)
 	checkCount := 0
 
 	for {
@@ -1266,7 +1270,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 			inside := filepath.Join(cfg.ContainerDataRoot, "temp", fmt.Sprintf("%s-r.mp4", taskCode))
 
 			// 更新状态信息
-			status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟)", checkCount, checkCount/2)
+			status.CurrentStep = fmt.Sprintf("等待视频合成完成 (已检查 %d 次，约 %d 分钟，最多等待约 %.1f 分钟)", checkCount, checkCount/2, maxWait.Minutes())
 			persistTaskStatus(status)
 
 			// 优先通过宿主机挂载目录检测结果文件，避免依赖 docker 命令
@@ -1595,10 +1599,12 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 
 		case <-timeout:
 			status.Status = "failed"
+			status.Progress = 100
+			status.CurrentStep = "视频合成超时"
 			status.Error = "视频合成超时"
 			status.EndTime = time.Now().Unix()
 			status.TotalDuration = status.EndTime - status.StartTime
-			log.Printf("任务 %s 超时失败，总耗时: %d 秒 (%.1f 分钟)", taskID, status.TotalDuration, float64(status.TotalDuration)/60)
+			log.Printf("任务 %s 超时失败，总耗时: %d 秒 (%.1f 分钟)，超时时长: %.1f 分钟", taskID, status.TotalDuration, float64(status.TotalDuration)/60, maxWait.Minutes())
 			return
 		}
 	}
