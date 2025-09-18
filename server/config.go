@@ -26,7 +26,8 @@ type Config struct {
 	RedisPassword     string
 	VideoWaitTimeout  time.Duration
 	AudioTemplateDir  string
-	VideoTemplateDir  string
+    VideoTemplateDir  string
+    UsersFile         string
 }
 
 func getenv(key, def string) string {
@@ -37,7 +38,7 @@ func getenv(key, def string) string {
 }
 
 func loadConfig() Config {
-	cfg := Config{
+    cfg := Config{
 		Port:              getenv("APP_PORT", "8090"),
 		WorkDir:           getenv("APP_WORKDIR", "./data"),
 		StaticDir:         getenv("STATIC_DIR", ""),
@@ -52,17 +53,23 @@ func loadConfig() Config {
 		RabbitURL:         getenv("RABBITMQ_URL", "amqp://root:pddrabitmq1041@192.168.7.240:5672"),
 		QueuePrefix:       getenv("QUEUE_PREFIX", "digital_people"),
 		RedisAddr:         getenv("REDIS_ADDR", "192.168.7.29:6379"),
-		RedisPassword:     getenv("REDIS_PASSWORD", ""),
-	}
+        RedisPassword:     getenv("REDIS_PASSWORD", ""),
+    }
 
 	cfg.AudioTemplateDir = getenv("AUDIO_TEMPLATE_DIR", "")
 	if cfg.AudioTemplateDir == "" {
 		cfg.AudioTemplateDir = filepath.Join(cfg.HostVoiceDir, "_templates")
 	}
-	cfg.VideoTemplateDir = getenv("VIDEO_TEMPLATE_DIR", "")
-	if cfg.VideoTemplateDir == "" {
-		cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
-	}
+    cfg.VideoTemplateDir = getenv("VIDEO_TEMPLATE_DIR", "")
+    if cfg.VideoTemplateDir == "" {
+        cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
+    }
+
+    // 用户配置文件（宿主机JSON）
+    cfg.UsersFile = getenv("USERS_FILE", "")
+    if cfg.UsersFile == "" {
+        cfg.UsersFile = filepath.Join(cfg.WorkDir, "users.json")
+    }
 
 	timeoutMinutes := 10
 	if v := os.Getenv("AUTO_VIDEO_TIMEOUT_MINUTES"); v != "" {
@@ -76,10 +83,10 @@ func loadConfig() Config {
 	mustMkdirAll(cfg.HostVoiceDir)
 	mustMkdirAll(cfg.HostVideoDir)
 	mustMkdirAll(cfg.HostResultDir)
-	mustMkdirAll(cfg.AudioTemplateDir)
-	mustMkdirAll(cfg.VideoTemplateDir)
+    mustMkdirAll(cfg.AudioTemplateDir)
+    mustMkdirAll(cfg.VideoTemplateDir)
 
-	return cfg
+    return cfg
 }
 
 func mustMkdirAll(path string) {

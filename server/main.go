@@ -30,13 +30,18 @@ var (
 )
 
 func main() {
-	cfg = loadConfig()
-	if err := initRedis(); err != nil {
-		log.Fatalf("初始化 Redis 失败: %v", err)
-	}
-	if err := initRabbitMQ(); err != nil {
-		log.Fatalf("初始化 RabbitMQ 失败: %v", err)
-	}
+    cfg = loadConfig()
+    if err := initRedis(); err != nil {
+        log.Fatalf("初始化 Redis 失败: %v", err)
+    }
+    if err := initRabbitMQ(); err != nil {
+        log.Fatalf("初始化 RabbitMQ 失败: %v", err)
+    }
+    if err := loadUsers(); err != nil {
+        log.Printf("加载用户文件失败: %v (将允许空用户列表)", err)
+    } else {
+        log.Printf("已加载用户列表: 来自 %s", cfg.UsersFile)
+    }
 
 	if err := ensureFFmpeg(); err != nil {
 		log.Printf("警告: %v (请确保运行环境已安装 ffmpeg)", err)
@@ -49,9 +54,14 @@ func main() {
 	r.POST("/v1/invoke", handleProxyInvoke)
 	r.POST("/easy/submit", handleProxySubmit)
 
-	api := r.Group("/api")
-	{
-		api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+    api := r.Group("/api")
+    {
+        api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+        // 认证相关
+        api.GET("/auth/me", handleAuthMe)
+        api.GET("/auth/users", handleAuthUsers)
+        api.POST("/auth/login", handleAuthLogin)
+        api.POST("/auth/logout", handleAuthLogout)
 		api.GET("/files", handleListFiles)
 
 		api.POST("/upload/audio", handleUploadAudio)
@@ -67,7 +77,7 @@ func main() {
 		api.POST("/video/submit", handleVideoSubmit)
 		api.GET("/video/result", handleVideoResult)
 
-		api.POST("/auto/process", handleAutoProcess)
+        api.POST("/auto/process", handleAutoProcess)
 		api.GET("/auto/status/:taskId", handleAutoStatus)
 		api.GET("/auto/tasks", handleAutoTasks)
 		api.GET("/auto/archive", handleAutoArchive)
@@ -764,11 +774,17 @@ func startQueueWorker() {
 
 // /api/auto/process: 全自动化处理接口
 func handleAutoProcess(c *gin.Context) {
-	req := AutoProcessReq{
-		Speaker:           c.PostForm("speaker"),
-		Text:              c.PostForm("text"),
-		CopyToCompany:     parseBool(c.PostForm("copy_to_company")),
-		UseTTS:            true,
+    // 登录校验
+    loginUser := usernameFromContext(c)
+    if loginUser == "" {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+        return
+    }
+    req := AutoProcessReq{
+        Speaker:           c.PostForm("speaker"),
+        Text:              c.PostForm("text"),
+        CopyToCompany:     parseBool(c.PostForm("copy_to_company")),
+        UseTTS:            true,
 		AudioTemplateName: strings.TrimSpace(c.PostForm("audio_template_name")),
 		VideoTemplateName: strings.TrimSpace(c.PostForm("video_template_name")),
 	}
@@ -829,14 +845,15 @@ func handleAutoProcess(c *gin.Context) {
 	log.Printf("解析的请求参数: TaskName=%s, Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.TaskName, req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
 
 	taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
-	status := &AutoProcessStatus{
-		TaskID:      taskID,
-		TaskName:    req.TaskName,
-		Status:      "processing",
-		CurrentStep: "上传文件",
-		Progress:    0,
-		StartTime:   time.Now().Unix(),
-	}
+    status := &AutoProcessStatus{
+        TaskID:      taskID,
+        TaskName:    req.TaskName,
+        Username:    loginUser,
+        Status:      "processing",
+        CurrentStep: "上传文件",
+        Progress:    0,
+        StartTime:   time.Now().Unix(),
+    }
 	taskStatusMu.Lock()
 	taskStatusMap[taskID] = status
 	taskStatusMu.Unlock()

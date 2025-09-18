@@ -1,6 +1,34 @@
 <template>
   <div class="max-w-5xl mx-auto p-6 space-y-8">
-    <h1 class="text-2xl font-bold">胖哒哒数字人</h1>
+    <template v-if="!currentUser">
+      <h1 class="text-2xl font-bold mb-4">请先登录</h1>
+      <div class="bg-white p-6 rounded shadow max-w-md">
+        <div class="mb-3">
+          <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
+          <select v-model="loginUsername" class="border rounded px-3 py-2 w-full">
+            <option disabled value="">请选择用户名</option>
+            <option v-for="u in loginUsers" :key="u" :value="u">{{ u }}</option>
+          </select>
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">密码</label>
+          <input v-model="loginPassword" type="password" class="border rounded px-3 py-2 w-full" placeholder="请输入密码" />
+          <p class="text-xs text-gray-500 mt-1">默认初始密码为 12345</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button @click="login" class="px-4 py-2 bg-blue-600 text-white rounded" :disabled="loginLoading">{{ loginLoading ? '登录中...' : '登录' }}</button>
+          <span class="text-sm text-red-600" v-if="loginError">{{ loginError }}</span>
+        </div>
+      </div>
+    </template>
+    <template v-else>
+      <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold">胖哒哒数字人</h1>
+        <div class="text-sm text-gray-700">
+          当前用户：<span class="font-semibold">{{ currentUser }}</span>
+          <button class="ml-3 px-2 py-1 border rounded" @click="logout">退出登录</button>
+        </div>
+      </div>
     
     <!-- 全自动化处理 -->
     <section class="bg-green-50 border border-green-200 rounded-lg p-6">
@@ -186,6 +214,8 @@
               <th class="p-2">选择</th>
               <th class="p-2">任务ID</th>
               <th class="p-2">任务名</th>
+              <th class="p-2">用户</th>
+              <th class="p-2">提交时间</th>
               <th class="p-2">状态</th>
               <th class="p-2">进度</th>
               <th class="p-2">当前步骤</th>
@@ -201,6 +231,8 @@
               </td>
               <td class="p-2 whitespace-nowrap">{{ t.task_id }}</td>
               <td class="p-2 whitespace-nowrap">{{ t.task_name || '-' }}</td>
+              <td class="p-2 whitespace-nowrap">{{ t.username || '-' }}</td>
+              <td class="p-2 whitespace-nowrap">{{ formatTimestamp(t.start_time) }}</td>
               <td class="p-2">{{ t.status }}</td>
               <td class="p-2">{{ t.progress }}%</td>
               <td class="p-2">{{ t.current_step }}</td>
@@ -286,12 +318,78 @@
       <div v-if="resultResp" class="text-sm text-slate-600">结果: {{ resultResp.result }} <span v-if="resultResp.copied_to_company"> => {{ resultResp.copied_to_company }}</span></div>
     </section>
     </template>
+    </template>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import SearchableSelect from './components/SearchableSelect.vue'
+
+// 登录相关
+const currentUser = ref('')
+const loginUsers = ref([])
+const loginUsername = ref('')
+const loginPassword = ref('')
+const loginLoading = ref(false)
+const loginError = ref('')
+
+async function fetchMe() {
+  try {
+    const r = await fetch('/api/auth/me')
+    if (r.ok) {
+      const j = await r.json()
+      currentUser.value = j.username || ''
+    } else {
+      currentUser.value = ''
+    }
+  } catch (e) {
+    currentUser.value = ''
+  }
+}
+
+async function fetchLoginUsers() {
+  try {
+    const r = await fetch('/api/auth/users')
+    const j = await r.json()
+    loginUsers.value = j.users || []
+  } catch (e) { /* ignore */ }
+}
+
+async function login() {
+  loginError.value = ''
+  if (!loginUsername.value || !loginPassword.value) {
+    loginError.value = '请输入用户名和密码'
+    return
+  }
+  loginLoading.value = true
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: loginUsername.value, password: loginPassword.value })
+    })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok || j.error) {
+      loginError.value = j.error || `登录失败(${r.status})`
+      return
+    }
+    currentUser.value = j.username || loginUsername.value
+    // 登录后清空密码并刷新列表
+    loginPassword.value = ''
+    await refreshTasks()
+  } catch (e) {
+    loginError.value = '网络错误，请重试'
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' })
+  currentUser.value = ''
+  await fetchLoginUsers()
+}
 
 const audioFile = ref(null)
 const videoFile = ref(null)
@@ -849,18 +947,38 @@ function formatDuration(seconds) {
   }
 }
 
-onMounted(() => {
-  refreshFiles()
-  fetchTemplates()
-  refreshTasks()
-  tasksTimer = setInterval(refreshTasks, 5000)
-  nowTimer = setInterval(() => {
-    nowSeconds.value = Math.floor(Date.now() / 1000)
-  }, 1000)
+onMounted(async () => {
+  await fetchMe()
+  await fetchLoginUsers()
+  if (currentUser.value) {
+    refreshFiles()
+    fetchTemplates()
+    refreshTasks()
+    tasksTimer = setInterval(refreshTasks, 5000)
+    nowTimer = setInterval(() => {
+      nowSeconds.value = Math.floor(Date.now() / 1000)
+    }, 1000)
+  }
 })
 onUnmounted(() => {
   if (tasksTimer) clearInterval(tasksTimer)
   if (nowTimer) clearInterval(nowTimer)
+})
+
+watch(currentUser, (u, prev) => {
+  if (u && !prev) {
+    // 初始化轮询
+    refreshFiles()
+    fetchTemplates()
+    refreshTasks()
+    if (!tasksTimer) tasksTimer = setInterval(refreshTasks, 5000)
+    if (!nowTimer) nowTimer = setInterval(() => {
+      nowSeconds.value = Math.floor(Date.now() / 1000)
+    }, 1000)
+  } else if (!u && prev) {
+    if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null }
+    if (nowTimer) { clearInterval(nowTimer); nowTimer = null }
+  }
 })
 
 async function refreshTasks(){

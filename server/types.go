@@ -52,13 +52,14 @@ type AutoProcessReq struct {
 
 // 自动化处理状态
 type AutoProcessStatus struct {
-	TaskID        string `json:"task_id"`
-	TaskName      string `json:"task_name,omitempty"`
-	Status        string `json:"status"` // "processing", "completed", "failed"
-	CurrentStep   string `json:"current_step"`
-	Progress      int    `json:"progress"` // 0-100
-	Error         string `json:"error,omitempty"`
-	ResultVideo   string `json:"result_video,omitempty"`
+    TaskID        string `json:"task_id"`
+    TaskName      string `json:"task_name,omitempty"`
+    Username      string `json:"username,omitempty"`
+    Status        string `json:"status"` // "processing", "completed", "failed"
+    CurrentStep   string `json:"current_step"`
+    Progress      int    `json:"progress"` // 0-100
+    Error         string `json:"error,omitempty"`
+    ResultVideo   string `json:"result_video,omitempty"`
 	ResultPath    string `json:"result_path,omitempty"`
 	StartTime     int64  `json:"start_time"`               // 开始时间戳
 	EndTime       int64  `json:"end_time,omitempty"`       // 结束时间戳
