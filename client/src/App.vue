@@ -238,7 +238,15 @@
               <td class="p-2">{{ taskDurationLabel(t) }}</td>
               <td class="p-2 text-red-600 max-w-[20ch] truncate" :title="t.error">{{ t.error }}</td>
               <td class="p-2">
-                <a v-if="t.status==='completed'" :href="`/api/download/video/${t.result_video}`" class="text-blue-600 hover:underline">下载</a>
+                <div class="flex items-center gap-2">
+                  <a v-if="t.status==='completed'" :href="`/api/download/video/${t.result_video}`" class="text-blue-600 hover:underline">下载</a>
+                  <button
+                    v-if="t.status==='failed'"
+                    class="px-3 py-1 rounded border border-red-500 text-red-600 hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                    :disabled="isRetryingTask(t.task_id)"
+                    @click="retryTask(t)"
+                  >重试</button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -580,8 +588,45 @@ function taskDurationLabel(task) {
 // 队列列表和批量下载
 const taskList = ref([])
 const selectedTaskIds = ref([])
+const retryingTaskIds = ref(new Set())
 let tasksTimer = null
 let nowTimer = null
+
+function setRetryingTask(id, pending) {
+  const next = new Set(retryingTaskIds.value)
+  if (pending) {
+    next.add(id)
+  } else {
+    next.delete(id)
+  }
+  retryingTaskIds.value = next
+}
+
+function isRetryingTask(id) {
+  return retryingTaskIds.value.has(id)
+}
+
+async function retryTask(task) {
+  const id = task?.task_id
+  if (!id) return
+  setRetryingTask(id, true)
+  try {
+    const resp = await fetch(`/api/auto/tasks/${encodeURIComponent(id)}/retry`, { method: 'POST' })
+    const data = await resp.json().catch(() => ({}))
+    if (!resp.ok || data.error) {
+      const message = data.error || `HTTP ${resp.status}`
+      throw new Error(message)
+    }
+    await refreshTasks()
+  } catch (err) {
+    console.error('任务重试失败', err)
+    if (typeof window !== 'undefined' && window.alert) {
+      window.alert(`任务重试失败：${err?.message || err}`)
+    }
+  } finally {
+    setRetryingTask(id, false)
+  }
+}
 
 function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
 function onVideoPick(e){ videoFile.value = e.target.files?.[0] }

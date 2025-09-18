@@ -30,18 +30,18 @@ var (
 )
 
 func main() {
-    cfg = loadConfig()
-    if err := initRedis(); err != nil {
-        log.Fatalf("初始化 Redis 失败: %v", err)
-    }
-    if err := initRabbitMQ(); err != nil {
-        log.Fatalf("初始化 RabbitMQ 失败: %v", err)
-    }
-    if err := loadUsers(); err != nil {
-        log.Printf("加载用户文件失败: %v (将允许空用户列表)", err)
-    } else {
-        log.Printf("已加载用户列表: 来自 %s", cfg.UsersFile)
-    }
+	cfg = loadConfig()
+	if err := initRedis(); err != nil {
+		log.Fatalf("初始化 Redis 失败: %v", err)
+	}
+	if err := initRabbitMQ(); err != nil {
+		log.Fatalf("初始化 RabbitMQ 失败: %v", err)
+	}
+	if err := loadUsers(); err != nil {
+		log.Printf("加载用户文件失败: %v (将允许空用户列表)", err)
+	} else {
+		log.Printf("已加载用户列表: 来自 %s", cfg.UsersFile)
+	}
 
 	if err := ensureFFmpeg(); err != nil {
 		log.Printf("警告: %v (请确保运行环境已安装 ffmpeg)", err)
@@ -54,14 +54,14 @@ func main() {
 	r.POST("/v1/invoke", handleProxyInvoke)
 	r.POST("/easy/submit", handleProxySubmit)
 
-    api := r.Group("/api")
-    {
-        api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
-        // 认证相关
-        api.GET("/auth/me", handleAuthMe)
-        api.GET("/auth/users", handleAuthUsers)
-        api.POST("/auth/login", handleAuthLogin)
-        api.POST("/auth/logout", handleAuthLogout)
+	api := r.Group("/api")
+	{
+		api.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+		// 认证相关
+		api.GET("/auth/me", handleAuthMe)
+		api.GET("/auth/users", handleAuthUsers)
+		api.POST("/auth/login", handleAuthLogin)
+		api.POST("/auth/logout", handleAuthLogout)
 		api.GET("/files", handleListFiles)
 
 		api.POST("/upload/audio", handleUploadAudio)
@@ -77,9 +77,10 @@ func main() {
 		api.POST("/video/submit", handleVideoSubmit)
 		api.GET("/video/result", handleVideoResult)
 
-        api.POST("/auto/process", handleAutoProcess)
+		api.POST("/auto/process", handleAutoProcess)
 		api.GET("/auto/status/:taskId", handleAutoStatus)
 		api.GET("/auto/tasks", handleAutoTasks)
+		api.POST("/auto/tasks/:taskId/retry", handleAutoRetry)
 		api.GET("/auto/archive", handleAutoArchive)
 
 		api.GET("/download/video/:filename", handleDownloadVideo)
@@ -774,17 +775,17 @@ func startQueueWorker() {
 
 // /api/auto/process: 全自动化处理接口
 func handleAutoProcess(c *gin.Context) {
-    // 登录校验
-    loginUser := usernameFromContext(c)
-    if loginUser == "" {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
-        return
-    }
-    req := AutoProcessReq{
-        Speaker:           c.PostForm("speaker"),
-        Text:              c.PostForm("text"),
-        CopyToCompany:     parseBool(c.PostForm("copy_to_company")),
-        UseTTS:            true,
+	// 登录校验
+	loginUser := usernameFromContext(c)
+	if loginUser == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return
+	}
+	req := AutoProcessReq{
+		Speaker:           c.PostForm("speaker"),
+		Text:              c.PostForm("text"),
+		CopyToCompany:     parseBool(c.PostForm("copy_to_company")),
+		UseTTS:            true,
 		AudioTemplateName: strings.TrimSpace(c.PostForm("audio_template_name")),
 		VideoTemplateName: strings.TrimSpace(c.PostForm("video_template_name")),
 	}
@@ -845,15 +846,16 @@ func handleAutoProcess(c *gin.Context) {
 	log.Printf("解析的请求参数: TaskName=%s, Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.TaskName, req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
 
 	taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
-    status := &AutoProcessStatus{
-        TaskID:      taskID,
-        TaskName:    req.TaskName,
-        Username:    loginUser,
-        Status:      "processing",
-        CurrentStep: "上传文件",
-        Progress:    0,
-        StartTime:   time.Now().Unix(),
-    }
+	status := &AutoProcessStatus{
+		TaskID:      taskID,
+		TaskName:    req.TaskName,
+		Username:    loginUser,
+		Status:      "processing",
+		CurrentStep: "上传文件",
+		Progress:    0,
+		StartTime:   time.Now().Unix(),
+	}
+	status.Request = &req
 	taskStatusMu.Lock()
 	taskStatusMap[taskID] = status
 	taskStatusMu.Unlock()
@@ -877,6 +879,7 @@ func handleAutoProcess(c *gin.Context) {
 		}
 		log.Printf("音频文件保存成功: %s", audioPath)
 	}
+	status.AudioPath = audioPath
 
 	var videoPath string
 	if videoTemplatePath != "" {
@@ -895,6 +898,8 @@ func handleAutoProcess(c *gin.Context) {
 		}
 		log.Printf("视频文件保存成功: %s", videoPath)
 	}
+	status.VideoPath = videoPath
+	persistTaskStatus(status)
 
 	status.Status = "queued"
 	status.CurrentStep = "等待排队执行"
@@ -1672,6 +1677,85 @@ func handleAutoStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+func handleAutoRetry(c *gin.Context) {
+	loginUser := usernameFromContext(c)
+	if loginUser == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return
+	}
+
+	taskID := strings.TrimSpace(c.Param("taskId"))
+	if taskID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少任务ID"})
+		return
+	}
+
+	status, err := loadTaskStatus(taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取任务状态失败: %v", err)})
+		return
+	}
+	if status == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+		return
+	}
+	if status.Status != "failed" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持重试失败的任务"})
+		return
+	}
+	if status.AudioPath == "" || status.VideoPath == "" || status.Request == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "任务缺少重试所需的资源信息"})
+		return
+	}
+	if _, err := os.Stat(status.AudioPath); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("音频文件不可用: %v", err)})
+		return
+	}
+	if _, err := os.Stat(status.VideoPath); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("视频文件不可用: %v", err)})
+		return
+	}
+
+	payload := queuedTask{
+		TaskID:    taskID,
+		AudioPath: status.AudioPath,
+		VideoPath: status.VideoPath,
+		Req:       *status.Request,
+	}
+
+	status.RetryCount++
+	status.Status = "queued"
+	status.CurrentStep = "等待排队执行"
+	status.Progress = 0
+	status.StartTime = time.Now().Unix()
+	status.EndTime = 0
+	status.TotalDuration = 0
+	status.Error = ""
+	status.ResultVideo = ""
+	status.ResultPath = ""
+	status.Username = loginUser
+
+	taskStatusMu.Lock()
+	taskStatusMap[taskID] = status
+	taskStatusMu.Unlock()
+
+	addTaskToIndex(taskID, status.StartTime)
+	persistTaskStatus(status)
+
+	if err := publishTask(payload); err != nil {
+		status.Status = "failed"
+		status.Error = fmt.Sprintf("任务重新入队失败: %v", err)
+		status.EndTime = time.Now().Unix()
+		status.TotalDuration = status.EndTime - status.StartTime
+		persistTaskStatus(status)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": status.Error})
+		return
+	}
+
+	persistTaskStatus(status)
+	c.JSON(http.StatusOK, gin.H{"task_id": taskID, "status": status.Status, "retry_count": status.RetryCount})
 }
 
 // 列出所有任务状态（按开始时间倒序）
