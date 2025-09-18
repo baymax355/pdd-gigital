@@ -47,7 +47,9 @@
               </div>
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <input v-model="newAudioTemplateName" placeholder="模版名称（可选）" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
-                <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="uploadAudioTemplate" class="block text-xs text-amber-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 hover:file:bg-amber-200 disabled:opacity-60" />
+                <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="onAudioTemplateFilePick" class="block text-xs text-amber-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 hover:file:bg-amber-200 disabled:opacity-60" />
+                <button type="button" class="px-3 py-1 rounded bg-amber-500 text-white text-xs disabled:bg-amber-200" :disabled="isUploadingAudioTemplate || !audioTemplateFileForUpload" @click="uploadAudioTemplate">上传模版</button>
+                <span class="text-xs text-gray-500" v-if="audioTemplateFileForUpload && !isUploadingAudioTemplate">{{ audioTemplateFileForUpload.name }}</span>
                 <span v-if="audioTemplateMessage" :class="audioTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ audioTemplateMessage }}</span>
               </div>
               <p class="text-xs text-amber-600">提示：模版音频会自动转换为 16k WAV，可任意命名并反复使用。</p>
@@ -79,7 +81,9 @@
               </div>
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <input v-model="newVideoTemplateName" placeholder="模版名称（可选）" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
-                <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="uploadVideoTemplate" class="block text-xs text-sky-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 hover:file:bg-sky-200 disabled:opacity-60" />
+                <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="onVideoTemplateFilePick" class="block text-xs text-sky-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 hover:file:bg-sky-200 disabled:opacity-60" />
+                <button type="button" class="px-3 py-1 rounded bg-sky-500 text-white text-xs disabled:bg-sky-200" :disabled="isUploadingVideoTemplate || !videoTemplateFileForUpload" @click="uploadVideoTemplate">上传模版</button>
+                <span class="text-xs text-gray-500" v-if="videoTemplateFileForUpload && !isUploadingVideoTemplate">{{ videoTemplateFileForUpload.name }}</span>
                 <span v-if="videoTemplateMessage" :class="videoTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ videoTemplateMessage }}</span>
               </div>
               <p class="text-xs text-sky-600">提示：视频模版会自动转为 MP4，适合存放不同人物形象。</p>
@@ -355,6 +359,8 @@ const selectedAudioTemplate = ref('')
 const selectedVideoTemplate = ref('')
 const newAudioTemplateName = ref('')
 const newVideoTemplateName = ref('')
+const audioTemplateFileForUpload = ref(null)
+const videoTemplateFileForUpload = ref(null)
 const isUploadingAudioTemplate = ref(false)
 const isUploadingVideoTemplate = ref(false)
 const audioTemplateMessage = ref('')
@@ -498,9 +504,37 @@ function onAutoVideoPick(e){
   }
 }
 
-async function uploadAudioTemplate(e){
-  const file = e.target.files?.[0]
-  if (!file) return
+function onAudioTemplateFilePick(e) {
+  const file = e.target.files?.[0] || null
+  audioTemplateFileForUpload.value = file
+  if (file) {
+    audioTemplateMessage.value = ''
+  }
+  if (file && !newAudioTemplateName.value) {
+    newAudioTemplateName.value = ''
+  }
+  e.target.value = ''
+}
+
+function onVideoTemplateFilePick(e) {
+  const file = e.target.files?.[0] || null
+  videoTemplateFileForUpload.value = file
+  if (file) {
+    videoTemplateMessage.value = ''
+  }
+  if (file && !newVideoTemplateName.value) {
+    newVideoTemplateName.value = ''
+  }
+  e.target.value = ''
+}
+
+async function uploadAudioTemplate(){
+  const file = audioTemplateFileForUpload.value
+  if (!file) {
+    audioTemplateMessage.value = '请先选择音频文件'
+    audioTemplateMessageType.value = 'error'
+    return
+  }
   audioTemplateMessage.value = ''
   audioTemplateMessageType.value = 'success'
   isUploadingAudioTemplate.value = true
@@ -523,19 +557,23 @@ async function uploadAudioTemplate(e){
     audioTemplateMessageType.value = 'success'
     autoAudioFile.value = null
     newAudioTemplateName.value = ''
+    audioTemplateFileForUpload.value = null
   } catch (err) {
     console.error('音频模版上传失败', err)
     audioTemplateMessage.value = `音频模版上传失败：${err?.message || err}`
     audioTemplateMessageType.value = 'error'
   } finally {
     isUploadingAudioTemplate.value = false
-    e.target.value = ''
   }
 }
 
-async function uploadVideoTemplate(e){
-  const file = e.target.files?.[0]
-  if (!file) return
+async function uploadVideoTemplate(){
+  const file = videoTemplateFileForUpload.value
+  if (!file) {
+    videoTemplateMessage.value = '请先选择视频文件'
+    videoTemplateMessageType.value = 'error'
+    return
+  }
   videoTemplateMessage.value = ''
   videoTemplateMessageType.value = 'success'
   isUploadingVideoTemplate.value = true
@@ -558,13 +596,13 @@ async function uploadVideoTemplate(e){
     videoTemplateMessageType.value = 'success'
     autoVideoFile.value = null
     newVideoTemplateName.value = ''
+    videoTemplateFileForUpload.value = null
   } catch (err) {
     console.error('视频模版上传失败', err)
     videoTemplateMessage.value = `视频模版上传失败：${err?.message || err}`
     videoTemplateMessageType.value = 'error'
   } finally {
     isUploadingVideoTemplate.value = false
-    e.target.value = ''
   }
 }
 
