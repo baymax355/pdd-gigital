@@ -18,12 +18,15 @@ const (
 	templateKindVideo = "video"
 )
 
-func templateDir() string {
-	return filepath.Join(cfg.WorkDir, "templates")
-}
-
 func templateKindDir(kind string) string {
-	return filepath.Join(templateDir(), kind)
+	switch kind {
+	case templateKindAudio:
+		return cfg.AudioTemplateDir
+	case templateKindVideo:
+		return cfg.VideoTemplateDir
+	default:
+		return filepath.Join(cfg.WorkDir, "templates", kind)
+	}
 }
 
 func templateRedisKey(kind string) string {
@@ -155,7 +158,19 @@ func findTemplateItem(kind, name string) (TemplateItem, string, error) {
 				return empty, "", err
 			}
 			if _, err := os.Stat(path); err != nil {
-				return empty, "", err
+				if os.IsNotExist(err) {
+					legacyDir := filepath.Join(cfg.WorkDir, "templates", kind)
+					legacyPath := filepath.Join(legacyDir, it.Name+templateFileExt(kind))
+					if st, legacyErr := os.Stat(legacyPath); legacyErr == nil && !st.IsDir() {
+						if copyErr := copyFile(legacyPath, path); copyErr != nil {
+							return empty, "", fmt.Errorf("模版迁移失败: %w", copyErr)
+						}
+					} else {
+						return empty, "", fmt.Errorf("模板 %s 文件缺失", name)
+					}
+				} else {
+					return empty, "", err
+				}
 			}
 			return it, path, nil
 		}

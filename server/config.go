@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -24,6 +25,8 @@ type Config struct {
 	RedisAddr         string
 	RedisPassword     string
 	VideoWaitTimeout  time.Duration
+	AudioTemplateDir  string
+	VideoTemplateDir  string
 }
 
 func getenv(key, def string) string {
@@ -52,6 +55,15 @@ func loadConfig() Config {
 		RedisPassword:     getenv("REDIS_PASSWORD", ""),
 	}
 
+	cfg.AudioTemplateDir = getenv("AUDIO_TEMPLATE_DIR", "")
+	if cfg.AudioTemplateDir == "" {
+		cfg.AudioTemplateDir = filepath.Join(cfg.HostVoiceDir, "_templates")
+	}
+	cfg.VideoTemplateDir = getenv("VIDEO_TEMPLATE_DIR", "")
+	if cfg.VideoTemplateDir == "" {
+		cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
+	}
+
 	timeoutMinutes := 10
 	if v := os.Getenv("AUTO_VIDEO_TIMEOUT_MINUTES"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
@@ -64,6 +76,8 @@ func loadConfig() Config {
 	mustMkdirAll(cfg.HostVoiceDir)
 	mustMkdirAll(cfg.HostVideoDir)
 	mustMkdirAll(cfg.HostResultDir)
+	mustMkdirAll(cfg.AudioTemplateDir)
+	mustMkdirAll(cfg.VideoTemplateDir)
 
 	return cfg
 }
