@@ -49,7 +49,8 @@
           <div class="space-y-3">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-2">音频文件</label>
-              <input type="file" accept="audio/*" :disabled="!!selectedAudioTemplate" @change="onAutoAudioPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-60" />
+              <input type="file" accept="audio/*" :disabled="!!selectedAudioTemplate" @change="onAutoAudioPick" class="block w-full text-sm text-transparent file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-60" />
+              <p v-if="autoAudioFile" class="mt-1 text-xs text-gray-500">已选文件：{{ autoAudioFile.name }}</p>
               <p v-if="selectedAudioTemplate" class="mt-1 text-xs text-amber-600">已选择音频模版，若需重新上传请清空模版选择。</p>
             </div>
             <div class="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2 text-sm text-gray-700">
@@ -72,7 +73,7 @@
               </div>
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <input v-model="newAudioTemplateName" placeholder="模版名称（可选）" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
-                <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="onAudioTemplateFilePick" class="block text-xs text-amber-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 hover:file:bg-amber-200 disabled:opacity-60" />
+                <input type="file" accept="audio/*" :disabled="isUploadingAudioTemplate" @change="onAudioTemplateFilePick" class="block text-xs text-transparent file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-amber-100 file:text-amber-700 hover:file:bg-amber-200 disabled:opacity-60" />
                 <button type="button" class="px-3 py-1 rounded bg-amber-500 text-white text-xs disabled:bg-amber-200" :disabled="isUploadingAudioTemplate || !audioTemplateFileForUpload" @click="uploadAudioTemplate">上传模版</button>
                 <span class="text-xs text-gray-500" v-if="audioTemplateFileForUpload && !isUploadingAudioTemplate">{{ audioTemplateFileForUpload.name }}</span>
                 <span v-if="audioTemplateMessage" :class="audioTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ audioTemplateMessage }}</span>
@@ -83,7 +84,8 @@
           <div class="space-y-3">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-2">视频文件</label>
-              <input type="file" accept="video/*" :disabled="!!selectedVideoTemplate" @change="onAutoVideoPick" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-60" />
+              <input type="file" accept="video/*" :disabled="!!selectedVideoTemplate" @change="onAutoVideoPick" class="block w-full text-sm text-transparent file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-60" />
+              <p v-if="autoVideoFile" class="mt-1 text-xs text-gray-500">已选文件：{{ autoVideoFile.name }}</p>
               <p v-if="selectedVideoTemplate" class="mt-1 text-xs text-sky-600">已选择视频模版，若需重新上传请清空模版选择。</p>
             </div>
             <div class="rounded-lg border border-sky-200 bg-sky-50/60 p-3 space-y-2 text-sm text-gray-700">
@@ -106,7 +108,7 @@
               </div>
               <div class="flex flex-wrap items-center gap-2 text-xs">
                 <input v-model="newVideoTemplateName" placeholder="模版名称（可选）" class="border rounded px-2 py-1 text-xs flex-1 min-w-[10rem]" />
-                <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="onVideoTemplateFilePick" class="block text-xs text-sky-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 hover:file:bg-sky-200 disabled:opacity-60" />
+                <input type="file" accept="video/*" :disabled="isUploadingVideoTemplate" @change="onVideoTemplateFilePick" class="block text-xs text-transparent file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-sky-100 file:text-sky-700 hover:file:bg-sky-200 disabled:opacity-60" />
                 <button type="button" class="px-3 py-1 rounded bg-sky-500 text-white text-xs disabled:bg-sky-200" :disabled="isUploadingVideoTemplate || !videoTemplateFileForUpload" @click="uploadVideoTemplate">上传模版</button>
                 <span class="text-xs text-gray-500" v-if="videoTemplateFileForUpload && !isUploadingVideoTemplate">{{ videoTemplateFileForUpload.name }}</span>
                 <span v-if="videoTemplateMessage" :class="videoTemplateMessageType === 'error' ? 'text-red-600' : 'text-emerald-600'">{{ videoTemplateMessage }}</span>
@@ -255,9 +257,10 @@
     <section class="bg-white p-4 rounded shadow space-y-3">
       <h2 class="font-semibold">1) 音频上传与标准化</h2>
       <form @submit.prevent="uploadAudio" class="flex items-center gap-3 flex-wrap">
-        <input type="file" accept="audio/*" @change="onAudioPick" class="block" />
+        <input type="file" accept="audio/*" @change="onAudioPick" class="block text-transparent file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
         <button class="px-3 py-1 bg-blue-600 text-white rounded" :disabled="!audioFile">开始处理</button>
       </form>
+      <div v-if="audioFile" class="text-xs text-gray-500">已选文件：{{ audioFile.name }}</div>
       <div v-if="audioResult" class="text-sm text-slate-600">
         <div>参考音频: {{ audioResult.reference_audio }}</div>
         <div>已拷贝: {{ audioResult.copied_to }}</div>
@@ -267,9 +270,10 @@
     <section class="bg-white p-4 rounded shadow space-y-3">
       <h2 class="font-semibold">2) 视频上传并静音</h2>
       <form @submit.prevent="uploadVideo" class="flex items-center gap-3 flex-wrap">
-        <input type="file" accept="video/*" @change="onVideoPick" class="block" />
+        <input type="file" accept="video/*" @change="onVideoPick" class="block text-transparent file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
         <button class="px-3 py-1 bg-blue-600 text-white rounded" :disabled="!videoFile">生成静音视频</button>
       </form>
+      <div v-if="videoFile" class="text-xs text-gray-500">已选文件：{{ videoFile.name }}</div>
       <div v-if="videoResult" class="text-sm text-slate-600">已生成: {{ videoResult.copied_to }}</div>
     </section>
 
@@ -417,10 +421,12 @@ const nowSeconds = ref(Math.floor(Date.now() / 1000))
 const autoDurationSeconds = computed(() => {
   if (!autoStatus.value) return 0
   const status = autoStatus.value
+  // 完成/失败：使用总时长
   if ((status.status === 'completed' || status.status === 'failed') && status.total_duration) {
     return status.total_duration
   }
-  if (status.start_time) {
+  // 仅在 processing 时递增
+  if (status.status === 'processing' && status.start_time) {
     return Math.max(0, nowSeconds.value - status.start_time)
   }
   return 0
@@ -432,10 +438,11 @@ const autoDurationLabel = computed(() => {
   if (seconds > 0) {
     return formatDuration(seconds)
   }
-  if (status.start_time) {
+  // 未开始或队列中显示 0 秒
+  if (status.status === 'queued' || !status.start_time) {
     return '0秒'
   }
-  return '等待开始'
+  return '0秒'
 })
 
 const audioTemplates = ref([])
@@ -546,12 +553,15 @@ function deriveTemplateNameFromFile(filename) {
 
 function taskDurationSeconds(task) {
   if (!task) return 0
+  // 结束态：使用总时长
   if ((task.status === 'completed' || task.status === 'failed') && task.total_duration) {
     return task.total_duration
   }
-  if (task.start_time) {
+  // 仅在 processing 阶段基于 start_time 实时计算
+  if (task.status === 'processing' && task.start_time) {
     return Math.max(0, nowSeconds.value - task.start_time)
   }
+  // 未开始(queued)或其他状态显示 0
   return 0
 }
 
