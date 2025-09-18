@@ -89,6 +89,8 @@ func sanitizeFilename(name string) string {
 			return r
 		case r == '.' || r == '_' || r == '-' || r == ' ':
 			return r
+		case unicode.Is(unicode.Han, r):
+			return r
 		default:
 			return '-'
 		}
