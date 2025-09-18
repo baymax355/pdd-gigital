@@ -145,6 +145,7 @@
             <div class="bg-green-600 h-2 rounded-full transition-all duration-300" :style="{ width: autoStatus.progress + '%' }"></div>
           </div>
           <div v-if="autoStatus.task_name" class="text-sm text-gray-600">任务名称：{{ autoStatus.task_name }}</div>
+          <div class="text-sm text-gray-600 mt-1">已耗时：{{ autoDurationLabel }}</div>
           <div v-if="autoStatus.status === 'completed'" class="text-green-600 font-medium">
             ✅ 处理完成！视频文件：{{ autoStatus.result_video }}
             <div class="text-sm text-gray-600 mt-1">
@@ -199,7 +200,7 @@
               <td class="p-2">{{ t.status }}</td>
               <td class="p-2">{{ t.progress }}%</td>
               <td class="p-2">{{ t.current_step }}</td>
-              <td class="p-2">{{ t.total_duration ? formatDuration(t.total_duration) : (t.start_time ? '进行中' : '-') }}</td>
+              <td class="p-2">{{ taskDurationLabel(t) }}</td>
               <td class="p-2 text-red-600 max-w-[20ch] truncate" :title="t.error">{{ t.error }}</td>
               <td class="p-2">
                 <a v-if="t.status==='completed'" :href="`/api/download/video/${t.result_video}`" class="text-blue-600 hover:underline">下载</a>
@@ -323,6 +324,30 @@ const showManualSteps = ref(false)
 const taskNameError = ref('')
 const sanitizedTaskName = computed(() => sanitizeTaskNameLocal(autoTaskName.value))
 const taskNamePreview = computed(() => (sanitizedTaskName.value ? `${sanitizedTaskName.value}.mp4` : ''))
+const nowSeconds = ref(Math.floor(Date.now() / 1000))
+const autoDurationSeconds = computed(() => {
+  if (!autoStatus.value) return 0
+  const status = autoStatus.value
+  if ((status.status === 'completed' || status.status === 'failed') && status.total_duration) {
+    return status.total_duration
+  }
+  if (status.start_time) {
+    return Math.max(0, nowSeconds.value - status.start_time)
+  }
+  return 0
+})
+const autoDurationLabel = computed(() => {
+  if (!autoStatus.value) return '-'
+  const status = autoStatus.value
+  const seconds = autoDurationSeconds.value
+  if (seconds > 0) {
+    return formatDuration(seconds)
+  }
+  if (status.start_time) {
+    return '0秒'
+  }
+  return '等待开始'
+})
 
 const audioTemplates = ref([])
 const videoTemplates = ref([])
@@ -419,10 +444,34 @@ function sanitizeTaskNameLocal(name) {
   return normalized
 }
 
+function taskDurationSeconds(task) {
+  if (!task) return 0
+  if ((task.status === 'completed' || task.status === 'failed') && task.total_duration) {
+    return task.total_duration
+  }
+  if (task.start_time) {
+    return Math.max(0, nowSeconds.value - task.start_time)
+  }
+  return 0
+}
+
+function taskDurationLabel(task) {
+  if (!task) return '-'
+  const seconds = taskDurationSeconds(task)
+  if (seconds > 0) {
+    return formatDuration(seconds)
+  }
+  if (task.start_time) {
+    return '0秒'
+  }
+  return '-'
+}
+
 // 队列列表和批量下载
 const taskList = ref([])
 const selectedTaskIds = ref([])
 let tasksTimer = null
+let nowTimer = null
 
 function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
 function onVideoPick(e){ videoFile.value = e.target.files?.[0] }
@@ -698,7 +747,13 @@ async function startAutoProcess(){
       if (result.task_id) {
         autoTaskId.value = result.task_id
         const serverTaskName = result.task_name || finalTaskName
-        autoStatus.value = { status: 'queued', current_step: '等待排队执行', progress: 0, task_name: serverTaskName }
+        autoStatus.value = {
+          status: 'queued',
+          current_step: '等待排队执行',
+          progress: 0,
+          task_name: serverTaskName,
+          start_time: Math.floor(Date.now() / 1000),
+        }
         pollAutoStatus()
       } else {
         uploadError.value = '未返回任务ID'
@@ -741,8 +796,9 @@ function formatTimestamp(ts) {
 }
 
 function formatDuration(seconds) {
-  if (!seconds) return '计算中...'
-  
+  if (seconds === undefined || seconds === null) return '计算中...'
+  if (seconds <= 0) return '0秒'
+
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = seconds % 60
@@ -761,8 +817,14 @@ onMounted(() => {
   fetchTemplates()
   refreshTasks()
   tasksTimer = setInterval(refreshTasks, 5000)
+  nowTimer = setInterval(() => {
+    nowSeconds.value = Math.floor(Date.now() / 1000)
+  }, 1000)
 })
-onUnmounted(() => { if (tasksTimer) clearInterval(tasksTimer) })
+onUnmounted(() => {
+  if (tasksTimer) clearInterval(tasksTimer)
+  if (nowTimer) clearInterval(nowTimer)
+})
 
 async function refreshTasks(){
   try {
