@@ -1310,7 +1310,7 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 
 	maxWait := cfg.VideoWaitTimeout
 	if maxWait <= 0 {
-		maxWait = 10 * time.Minute
+		maxWait = 15 * time.Minute
 	}
 	timeout := time.After(maxWait)
 	checkCount := 0

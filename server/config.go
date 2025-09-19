@@ -71,7 +71,7 @@ func loadConfig() Config {
         cfg.UsersFile = filepath.Join(cfg.WorkDir, "users.json")
     }
 
-	timeoutMinutes := 10
+	timeoutMinutes := 15
 	if v := os.Getenv("AUTO_VIDEO_TIMEOUT_MINUTES"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
