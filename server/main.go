@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,13 @@ var (
 	rabbitChannel   *amqp.Channel
 	rabbitQueueName string
 	redisClient     *redis.Client
+	autoTaskCounter atomic.Uint64
 )
+
+func nextAutoTaskID() string {
+	seq := autoTaskCounter.Add(1)
+	return fmt.Sprintf("auto-%d-%d", time.Now().UnixNano(), seq)
+}
 
 func main() {
 	cfg = loadConfig()
@@ -845,7 +852,7 @@ func handleAutoProcess(c *gin.Context) {
 
 	log.Printf("解析的请求参数: TaskName=%s, Speaker=%s, Text=%s, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.TaskName, req.Speaker, req.Text, req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
 
-	taskID := fmt.Sprintf("auto-%d", time.Now().Unix())
+	taskID := nextAutoTaskID()
 	status := &AutoProcessStatus{
 		TaskID:      taskID,
 		TaskName:    req.TaskName,
