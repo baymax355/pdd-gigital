@@ -12,20 +12,18 @@ services:
     ports:
       - '8090:8090'
     volumes:
-      - ~/heygem_data/voice/data:/root/heygem_data/voice/data
-      - ~/heygem_data/face2face:/root/heygem_data/face2face
-      - ~/heygem_data/face2face/result:/root/heygem_data/face2face/result
-      - ~/heygem_data/workdir:/root/data
-      - ${COMPANY_DIR:-./company}:/mnt/c/company
+      - ${DIGITAL_PEOPLE_DIR:-~/heygem_data/digitalpeople}:/root/windows-share
       - ./client/dist:/root/client/dist
-      # 直接使用仓库内的 users.json（优先于上面的 /root/data 挂载）
+      # 使用仓库内的 users.json 覆盖默认用户配置
       - ./server/data/users.json:/root/data/users.json:ro
     environment:
       - APP_PORT=8090
-      - HOST_VOICE_DIR=/root/heygem_data/voice/data
-      - HOST_VIDEO_DIR=/root/heygem_data/face2face
-      - HOST_RESULT_DIR=/root/heygem_data/face2face/result
-      - WIN_COMPANY_DIR=/mnt/c/company
+      - DIGITAL_PEOPLE_DIR=/root/windows-share
+      - APP_WORKDIR=/root/windows-share/workdir
+      - HOST_VOICE_DIR=/root/windows-share/voice/data
+      - HOST_VIDEO_DIR=/root/windows-share/face2face
+      - HOST_RESULT_DIR=/root/windows-share/face2face/result
+      - WIN_COMPANY_DIR=/root/windows-share
       - TTS_BASE_URL=http://heygem-tts:8080
       - VIDEO_BASE_URL=http://heygem-gen-video:8383
       - GEN_VIDEO_CONTAINER=heygem-gen-video
@@ -47,7 +45,7 @@ services:
     ports:
       - '18180:8080'
     volumes:
-      - ~/heygem_data/voice/data:/code/data
+      - ${DIGITAL_PEOPLE_DIR:-~/heygem_data/digitalpeople}/voice/data:/code/data
     command: /bin/bash -c "/opt/conda/envs/python310/bin/python3 tools/api_server.py --listen 0.0.0.0:8080"
     networks:
       - ai_network
@@ -77,7 +75,7 @@ services:
     runtime: nvidia
     privileged: true
     volumes:
-      - ~/heygem_data/face2face:/code/data
+      - ${DIGITAL_PEOPLE_DIR:-~/heygem_data/digitalpeople}/face2face:/code/data
     environment:
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
     deploy:

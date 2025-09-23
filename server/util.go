@@ -107,6 +107,11 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
+	srcClean := filepath.Clean(src)
+	dstClean := filepath.Clean(dst)
+	if srcClean == dstClean {
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -119,6 +124,19 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+func removeFileIfExists(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func httpJSON(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Response, error) {

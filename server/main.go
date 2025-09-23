@@ -511,8 +511,30 @@ func handleVideoResult(c *gin.Context) {
 	}
 	copyCompany := c.Query("copy_to_company") == "1"
 
+	hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", code))
+	if st, err := os.Stat(hostOut); err == nil && !st.IsDir() && st.Size() > 0 {
+		companyOut := ""
+		if copyCompany {
+			companyOut = filepath.Join(cfg.WindowsCompanyDir, fmt.Sprintf("%s-r.mp4", code))
+			if err := copyFile(hostOut, companyOut); err != nil {
+				c.JSON(500, gin.H{"error": fmt.Sprintf("复制到 Windows 目录失败: %v", err)})
+				return
+			}
+		}
+
+		c.JSON(200, gin.H{"result": hostOut, "copied_to_company": companyOut})
+		return
+	}
+
 	container := cfg.GenVideoContainer
 	inside := filepath.Join(cfg.ContainerDataRoot, "temp", fmt.Sprintf("%s-r.mp4", code))
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if _, rmErr, rmRunErr := run(cleanupCtx, "docker", "exec", "-i", container, "bash", "-lc", fmt.Sprintf("rm -f '%s'", inside)); rmRunErr != nil {
+			log.Printf("清理容器文件失败: %v | %s", rmRunErr, rmErr)
+		}
+	}()
 
 	// docker exec 检查文件是否存在
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
@@ -536,7 +558,6 @@ func handleVideoResult(c *gin.Context) {
 	}
 
 	// docker cp 拷贝到 HostResultDir
-	hostOut := filepath.Join(cfg.HostResultDir, fmt.Sprintf("%s-r.mp4", code))
 	if err := os.MkdirAll(filepath.Dir(hostOut), 0o755); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -1072,6 +1093,37 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	var body []byte
 	var url string
 	var resp *http.Response
+	cleanupPaths := make(map[string]struct{})
+	var cleanupFuncs []func()
+	addCleanupPath := func(path string) {
+		if path == "" {
+			return
+		}
+		cleanupPaths[path] = struct{}{}
+	}
+	addCleanupFunc := func(fn func()) {
+		if fn == nil {
+			return
+		}
+		cleanupFuncs = append(cleanupFuncs, fn)
+	}
+	defer func() {
+		for _, fn := range cleanupFuncs {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("执行清理回调时发生异常: %v", r)
+					}
+				}()
+				fn()
+			}()
+		}
+		for path := range cleanupPaths {
+			if err := removeFileIfExists(path); err != nil {
+				log.Printf("清理临时文件失败: %s (%v)", path, err)
+			}
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			status.Status = "failed"
@@ -1280,6 +1332,15 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	containerResultName := fmt.Sprintf("%s-r.mp4", taskCode)
 	resultFilename := fmt.Sprintf("%s.mp4", taskCode)
 	containerResultPath := filepath.Join(cfg.ContainerDataRoot, "temp", containerResultName)
+	hostTempVideoPath := filepath.Join(cfg.HostVideoDir, "temp", containerResultName)
+	addCleanupPath(hostTempVideoPath)
+	addCleanupFunc(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if _, rmErr, rmRunErr := run(cleanupCtx, "docker", "exec", "-i", cfg.GenVideoContainer, "bash", "-lc", fmt.Sprintf("rm -f '%s'", containerResultPath)); rmRunErr != nil {
+			log.Printf("清理容器内临时文件失败: %v | %s", rmRunErr, rmErr)
+		}
+	})
 	payload := map[string]any{
 		"audio_url":        filepath.Join(cfg.ContainerDataRoot, audioForVideo),
 		"video_url":        filepath.Join(cfg.ContainerDataRoot, "silent.mp4"),
@@ -1334,17 +1395,15 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 			persistTaskStatus(status)
 
 			// 优先通过宿主机挂载目录检测结果文件，避免依赖 docker 命令
-			resultName := containerResultName
-			srcOnHost := filepath.Join(cfg.HostVideoDir, "temp", resultName)
 			hostOut := filepath.Join(cfg.HostResultDir, resultFilename)
-			if st, err := os.Stat(srcOnHost); err == nil && !st.IsDir() {
-				log.Printf("检测到结果文件: %s (size=%d)", srcOnHost, st.Size())
+			if st, err := os.Stat(hostTempVideoPath); err == nil && !st.IsDir() {
+				log.Printf("检测到结果文件: %s (size=%d)", hostTempVideoPath, st.Size())
 				// 等待大小稳定（连续3次相同，每次间隔3s）
 				last := st.Size()
 				stable := 1
 				for i := 2; i <= 3; i++ {
 					time.Sleep(3 * time.Second)
-					st2, e2 := os.Stat(srcOnHost)
+					st2, e2 := os.Stat(hostTempVideoPath)
 					if e2 != nil {
 						log.Printf("稳定性检查失败: %v", e2)
 						break
@@ -1362,8 +1421,8 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 					// 复制并校验
 					copyOK := false
 					for attempt := 1; attempt <= 3; attempt++ {
-						log.Printf("=== 复制尝试(本地) #%d (src=%s -> dst=%s) ===", attempt, srcOnHost, hostOut)
-						if err := copyFile(srcOnHost, hostOut); err != nil {
+						log.Printf("=== 复制尝试(本地) #%d (src=%s -> dst=%s) ===", attempt, hostTempVideoPath, hostOut)
+						if err := copyFile(hostTempVideoPath, hostOut); err != nil {
 							log.Printf("复制失败: %v", err)
 							if attempt < 3 {
 								time.Sleep(5 * time.Second)
@@ -1387,6 +1446,10 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 						status.Error = "视频拷贝到结果目录失败，已重试3次"
 						return
 					}
+					if err := removeFileIfExists(hostTempVideoPath); err != nil {
+						log.Printf("清理本地临时文件失败: %v", err)
+					}
+
 					// 可选拷贝到公司目录
 					if req.CopyToCompany {
 						companyOut := filepath.Join(cfg.WindowsCompanyDir, resultFilename)
@@ -1616,8 +1679,12 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 						return
 					}
 
-					// 可选拷贝到Windows目录 - 直接从容器复制，避免使用被截断的文件
-					if req.CopyToCompany {
+					if err := removeFileIfExists(hostTempVideoPath); err != nil {
+						log.Printf("清理本地临时文件失败: %v", err)
+					}
+
+						// 可选拷贝到Windows目录 - 直接从容器复制，避免使用被截断的文件
+						if req.CopyToCompany {
 						companyOut := filepath.Join(cfg.WindowsCompanyDir, resultFilename)
 						companyCmd := fmt.Sprintf("docker cp %s:%s %s", cfg.GenVideoContainer, inside, companyOut)
 						log.Printf("执行Windows拷贝命令: %s", companyCmd)

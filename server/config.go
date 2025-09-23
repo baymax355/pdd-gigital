@@ -16,6 +16,7 @@ type Config struct {
 	HostVideoDir      string
 	HostResultDir     string
 	WindowsCompanyDir string
+	DigitalPeopleDir  string
 	TTSBaseURL        string
 	VideoBaseURL      string
 	GenVideoContainer string
@@ -26,8 +27,8 @@ type Config struct {
 	RedisPassword     string
 	VideoWaitTimeout  time.Duration
 	AudioTemplateDir  string
-    VideoTemplateDir  string
-    UsersFile         string
+	VideoTemplateDir  string
+	UsersFile         string
 }
 
 func getenv(key, def string) string {
@@ -38,14 +39,20 @@ func getenv(key, def string) string {
 }
 
 func loadConfig() Config {
-    cfg := Config{
+	sharedRoot := getenv("DIGITAL_PEOPLE_DIR", "")
+	if sharedRoot == "" {
+		sharedRoot = "/mnt/windows-digitalpeople"
+	}
+
+	cfg := Config{
 		Port:              getenv("APP_PORT", "8090"),
-		WorkDir:           getenv("APP_WORKDIR", "./data"),
+		DigitalPeopleDir:  sharedRoot,
+		WorkDir:           getenv("APP_WORKDIR", filepath.Join(sharedRoot, "workdir")),
 		StaticDir:         getenv("STATIC_DIR", ""),
-		HostVoiceDir:      getenv("HOST_VOICE_DIR", "/root/heygem_data/voice/data"),
-		HostVideoDir:      getenv("HOST_VIDEO_DIR", "/root/heygem_data/face2face"),
-		HostResultDir:     getenv("HOST_RESULT_DIR", "/root/heygem_data/face2face/result"),
-		WindowsCompanyDir: getenv("WIN_COMPANY_DIR", "/mnt/c/company"),
+		HostVoiceDir:      getenv("HOST_VOICE_DIR", filepath.Join(sharedRoot, "voice", "data")),
+		HostVideoDir:      getenv("HOST_VIDEO_DIR", filepath.Join(sharedRoot, "face2face")),
+		HostResultDir:     getenv("HOST_RESULT_DIR", filepath.Join(sharedRoot, "face2face", "result")),
+		WindowsCompanyDir: getenv("WIN_COMPANY_DIR", sharedRoot),
 		TTSBaseURL:        getenv("TTS_BASE_URL", "http://127.0.0.1:18180"),
 		VideoBaseURL:      getenv("VIDEO_BASE_URL", "http://127.0.0.1:8383"),
 		GenVideoContainer: getenv("GEN_VIDEO_CONTAINER", "heygem-gen-video"),
@@ -53,23 +60,23 @@ func loadConfig() Config {
 		RabbitURL:         getenv("RABBITMQ_URL", "amqp://root:pddrabitmq1041@192.168.7.240:5672"),
 		QueuePrefix:       getenv("QUEUE_PREFIX", "digital_people"),
 		RedisAddr:         getenv("REDIS_ADDR", "192.168.7.29:6379"),
-        RedisPassword:     getenv("REDIS_PASSWORD", ""),
-    }
+		RedisPassword:     getenv("REDIS_PASSWORD", ""),
+	}
 
 	cfg.AudioTemplateDir = getenv("AUDIO_TEMPLATE_DIR", "")
 	if cfg.AudioTemplateDir == "" {
 		cfg.AudioTemplateDir = filepath.Join(cfg.HostVoiceDir, "_templates")
 	}
-    cfg.VideoTemplateDir = getenv("VIDEO_TEMPLATE_DIR", "")
-    if cfg.VideoTemplateDir == "" {
-        cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
-    }
+	cfg.VideoTemplateDir = getenv("VIDEO_TEMPLATE_DIR", "")
+	if cfg.VideoTemplateDir == "" {
+		cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
+	}
 
-    // 用户配置文件（宿主机JSON）
-    cfg.UsersFile = getenv("USERS_FILE", "")
-    if cfg.UsersFile == "" {
-        cfg.UsersFile = filepath.Join(cfg.WorkDir, "users.json")
-    }
+	// 用户配置文件（宿主机JSON）
+	cfg.UsersFile = getenv("USERS_FILE", "")
+	if cfg.UsersFile == "" {
+		cfg.UsersFile = filepath.Join(cfg.WorkDir, "users.json")
+	}
 
 	timeoutMinutes := 15
 	if v := os.Getenv("AUTO_VIDEO_TIMEOUT_MINUTES"); v != "" {
@@ -83,10 +90,10 @@ func loadConfig() Config {
 	mustMkdirAll(cfg.HostVoiceDir)
 	mustMkdirAll(cfg.HostVideoDir)
 	mustMkdirAll(cfg.HostResultDir)
-    mustMkdirAll(cfg.AudioTemplateDir)
-    mustMkdirAll(cfg.VideoTemplateDir)
+	mustMkdirAll(cfg.AudioTemplateDir)
+	mustMkdirAll(cfg.VideoTemplateDir)
 
-    return cfg
+	return cfg
 }
 
 func mustMkdirAll(path string) {

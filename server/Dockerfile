@@ -28,20 +28,22 @@ WORKDIR /root/
 COPY --from=builder /app/heygem .
 
 # 创建必要的目录
-RUN mkdir -p /root/heygem_data/voice/data \
-    && mkdir -p /root/heygem_data/face2face \
-    && mkdir -p /root/heygem_data/face2face/result \
-    && mkdir -p /root/data
+RUN mkdir -p /root/windows-share/voice/data \
+    && mkdir -p /root/windows-share/face2face/temp \
+    && mkdir -p /root/windows-share/face2face/result \
+    && mkdir -p /root/windows-share/workdir
 
 # 暴露端口
 EXPOSE 8090
 
 # 设置环境变量
 ENV APP_PORT=8090
-ENV HOST_VOICE_DIR=/root/heygem_data/voice/data
-ENV HOST_VIDEO_DIR=/root/heygem_data/face2face
-ENV HOST_RESULT_DIR=/root/heygem_data/face2face/result
-ENV WIN_COMPANY_DIR=/mnt/c/company
+ENV DIGITAL_PEOPLE_DIR=/root/windows-share
+ENV APP_WORKDIR=/root/windows-share/workdir
+ENV HOST_VOICE_DIR=/root/windows-share/voice/data
+ENV HOST_VIDEO_DIR=/root/windows-share/face2face
+ENV HOST_RESULT_DIR=/root/windows-share/face2face/result
+ENV WIN_COMPANY_DIR=/root/windows-share
 ENV TTS_BASE_URL=http://heygem-tts:8080
 ENV VIDEO_BASE_URL=http://heygem-gen-video:8383
 ENV GEN_VIDEO_CONTAINER=heygem-gen-video
