@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1151,6 +1152,26 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	os.MkdirAll(work, 0o755)
 	norm := filepath.Join(work, "ref_norm.wav")
 
+	currentAudioPath := audioPath
+	if _, statErr := os.Stat(currentAudioPath); statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) && req.AudioTemplateName != "" {
+			log.Printf("检测到音频模板缺失，尝试重新加载: template=%s, path=%s", req.AudioTemplateName, currentAudioPath)
+			if _, retryPath, retryErr := findTemplateItem(templateKindAudio, req.AudioTemplateName); retryErr == nil {
+				currentAudioPath = retryPath
+				status.AudioPath = currentAudioPath
+				persistTaskStatus(status)
+			} else {
+				status.Status = "failed"
+				status.Error = fmt.Sprintf("音频模板缺失且恢复失败: %v", retryErr)
+				return
+			}
+		} else {
+			status.Status = "failed"
+			status.Error = fmt.Sprintf("音频文件不可用: %v", statErr)
+			return
+		}
+	}
+	audioPath = currentAudioPath
 	// 简单的格式转换，不做任何音频处理
 	_, stderr, err := run(processCtx, "ffmpeg", "-y", "-i", audioPath,
 		"-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", norm,
@@ -1683,8 +1704,8 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 						log.Printf("清理本地临时文件失败: %v", err)
 					}
 
-						// 可选拷贝到Windows目录 - 直接从容器复制，避免使用被截断的文件
-						if req.CopyToCompany {
+					// 可选拷贝到Windows目录 - 直接从容器复制，避免使用被截断的文件
+					if req.CopyToCompany {
 						companyOut := filepath.Join(cfg.WindowsCompanyDir, resultFilename)
 						companyCmd := fmt.Sprintf("docker cp %s:%s %s", cfg.GenVideoContainer, inside, companyOut)
 						log.Printf("执行Windows拷贝命令: %s", companyCmd)
