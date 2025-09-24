@@ -1,20 +1,20 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"fmt"
-	"io"
-	"log"
-	"mime/multipart"
-	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"time"
-	"unicode"
+    "bytes"
+    "context"
+    "errors"
+    "fmt"
+    "io"
+    "log"
+    "mime/multipart"
+    "net/http"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "strings"
+    "time"
+    "unicode"
 )
 
 func run(ctx context.Context, name string, args ...string) (string, string, error) {
@@ -126,6 +126,28 @@ func copyFile(src, dst string) error {
 	return out.Close()
 }
 
+func copyFileWithRetries(src, dst string, retries int, delay time.Duration) error {
+    var lastErr error
+    for i := 1; i <= retries; i++ {
+        if err := copyFile(src, dst); err != nil {
+            lastErr = err
+            time.Sleep(delay)
+            continue
+        }
+        // 校验是否可读
+        if err := waitFileReadable(dst, 3, 100*time.Millisecond); err != nil {
+            lastErr = err
+            time.Sleep(delay)
+            continue
+        }
+        return nil
+    }
+    if lastErr == nil {
+        lastErr = fmt.Errorf("copy failed after %d retries", retries)
+    }
+    return lastErr
+}
+
 func removeFileIfExists(path string) error {
 	if path == "" {
 		return nil
@@ -139,6 +161,31 @@ func removeFileIfExists(path string) error {
 	return nil
 }
 
+// 等待文件可读（处理网络共享延迟或并发可见性问题）
+func waitFileReadable(path string, retries int, delay time.Duration) error {
+    if path == "" {
+        return fmt.Errorf("empty path")
+    }
+    var lastErr error
+    for i := 0; i < retries; i++ {
+        f, err := os.Open(path)
+        if err == nil {
+            fi, _ := f.Stat()
+            _ = f.Close()
+            if fi != nil && fi.Size() >= 0 {
+                return nil
+            }
+        } else {
+            lastErr = err
+        }
+        time.Sleep(delay)
+    }
+    if lastErr == nil {
+        lastErr = fmt.Errorf("file not readable after %d retries", retries)
+    }
+    return lastErr
+}
+
 func httpJSON(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
@@ -150,9 +197,12 @@ func httpJSON(ctx context.Context, method, url string, body []byte, headers map[
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{Timeout: 10 * time.Minute}
-	return client.Do(req)
+    client := &http.Client{Timeout: 10 * time.Minute}
+    return client.Do(req)
 }
+
+// 带备用地址的 HTTP JSON 调用：primary 失败或 5xx 时尝试 fallback
+// 注：容器内运行时不再需要备用地址逻辑，保持简单直连
 
 func sanitizeTaskName(name string) string {
 	trimmed := strings.TrimSpace(name)

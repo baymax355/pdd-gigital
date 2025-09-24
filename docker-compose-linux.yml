@@ -12,22 +12,12 @@ services:
     ports:
       - '8090:8090'
     volumes:
-      - ${DIGITAL_PEOPLE_DIR:-~/heygem_data/digitalpeople}:/root/windows-share
+      - /mnt/windows-digitalpeople:/mnt/windows-digitalpeople
       - ./client/dist:/root/client/dist
       # 使用仓库内的 users.json 覆盖默认用户配置
       - ./server/data/users.json:/root/data/users.json:ro
     environment:
       - APP_PORT=8090
-      - DIGITAL_PEOPLE_DIR=/root/windows-share
-      - APP_WORKDIR=/root/windows-share/workdir
-      - HOST_VOICE_DIR=/root/windows-share/voice/data
-      - HOST_VIDEO_DIR=/root/windows-share/face2face
-      - HOST_RESULT_DIR=/root/windows-share/face2face/result
-      - WIN_COMPANY_DIR=/root/windows-share
-      - TTS_BASE_URL=http://heygem-tts:8080
-      - VIDEO_BASE_URL=http://heygem-gen-video:8383
-      - GEN_VIDEO_CONTAINER=heygem-gen-video
-      - GEN_VIDEO_CONTAINER_DATA_ROOT=/code/data
       - STATIC_DIR=/root/client/dist
     depends_on:
       - heygem-tts
@@ -45,7 +35,7 @@ services:
     ports:
       - '18180:8080'
     volumes:
-      - ${DIGITAL_PEOPLE_DIR:-~/heygem_data/digitalpeople}/voice/data:/code/data
+      - /mnt/windows-digitalpeople/voice/data:/code/data
     command: /bin/bash -c "/opt/conda/envs/python310/bin/python3 tools/api_server.py --listen 0.0.0.0:8080"
     networks:
       - ai_network
@@ -75,7 +65,7 @@ services:
     runtime: nvidia
     privileged: true
     volumes:
-      - ${DIGITAL_PEOPLE_DIR:-~/heygem_data/digitalpeople}/face2face:/code/data
+      - /mnt/windows-digitalpeople/face2face:/code/data
     environment:
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
     deploy:

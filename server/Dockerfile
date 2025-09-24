@@ -31,7 +31,11 @@ COPY --from=builder /app/heygem .
 RUN mkdir -p /root/windows-share/voice/data \
     && mkdir -p /root/windows-share/face2face/temp \
     && mkdir -p /root/windows-share/face2face/result \
-    && mkdir -p /root/windows-share/workdir
+    && mkdir -p /root/windows-share/workdir \
+    && mkdir -p /mnt/windows-digitalpeople/voice/data \
+    && mkdir -p /mnt/windows-digitalpeople/face2face/temp \
+    && mkdir -p /mnt/windows-digitalpeople/face2face/result \
+    && mkdir -p /mnt/windows-digitalpeople/workdir
 
 # 暴露端口
 EXPOSE 8090

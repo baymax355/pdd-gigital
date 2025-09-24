@@ -1,11 +1,11 @@
 package main
 
 import (
-	"log"
-	"os"
-	"path/filepath"
-	"strconv"
-	"time"
+    "log"
+    "os"
+    "path/filepath"
+    "strconv"
+    "time"
 )
 
 type Config struct {
@@ -39,38 +39,33 @@ func getenv(key, def string) string {
 }
 
 func loadConfig() Config {
-	sharedRoot := getenv("DIGITAL_PEOPLE_DIR", "")
-	if sharedRoot == "" {
-		sharedRoot = "/mnt/windows-digitalpeople"
-	}
+    // 全部写死到共享盘 /mnt/windows-digitalpeople，避免环境变量造成路径不一致
+    sharedRoot := "/mnt/windows-digitalpeople"
 
-	cfg := Config{
-		Port:              getenv("APP_PORT", "8090"),
-		DigitalPeopleDir:  sharedRoot,
-		WorkDir:           getenv("APP_WORKDIR", filepath.Join(sharedRoot, "workdir")),
-		StaticDir:         getenv("STATIC_DIR", ""),
-		HostVoiceDir:      getenv("HOST_VOICE_DIR", filepath.Join(sharedRoot, "voice", "data")),
-		HostVideoDir:      getenv("HOST_VIDEO_DIR", filepath.Join(sharedRoot, "face2face")),
-		HostResultDir:     getenv("HOST_RESULT_DIR", filepath.Join(sharedRoot, "face2face", "result")),
-		WindowsCompanyDir: getenv("WIN_COMPANY_DIR", sharedRoot),
-		TTSBaseURL:        getenv("TTS_BASE_URL", "http://127.0.0.1:18180"),
-		VideoBaseURL:      getenv("VIDEO_BASE_URL", "http://127.0.0.1:8383"),
-		GenVideoContainer: getenv("GEN_VIDEO_CONTAINER", "heygem-gen-video"),
-		ContainerDataRoot: getenv("GEN_VIDEO_CONTAINER_DATA_ROOT", "/code/data"),
-		RabbitURL:         getenv("RABBITMQ_URL", "amqp://root:pddrabitmq1041@192.168.7.240:5672"),
-		QueuePrefix:       getenv("QUEUE_PREFIX", "digital_people"),
-		RedisAddr:         getenv("REDIS_ADDR", "192.168.7.29:6379"),
-		RedisPassword:     getenv("REDIS_PASSWORD", ""),
-	}
+    cfg := Config{
+        Port:              "8090",
+        DigitalPeopleDir:  sharedRoot,
+        WorkDir:           filepath.Join(sharedRoot, "workdir"),
+        StaticDir:         getenv("STATIC_DIR", ""),
+        HostVoiceDir:      filepath.Join(sharedRoot, "voice", "data"),
+        HostVideoDir:      filepath.Join(sharedRoot, "face2face"),
+        HostResultDir:     filepath.Join(sharedRoot, "face2face", "result"),
+        WindowsCompanyDir: sharedRoot,
+        // 上游服务地址写死为 compose 内服务名
+        TTSBaseURL:        "http://heygem-tts:8080",
+        VideoBaseURL:      "http://heygem-gen-video:8383",
+        GenVideoContainer: "heygem-gen-video",
+        ContainerDataRoot: "/code/data",
+        // 队列/缓存保持原有默认，必要时自行修改源码
+        RabbitURL:         getenv("RABBITMQ_URL", "amqp://root:pddrabitmq1041@192.168.7.240:5672"),
+        QueuePrefix:       getenv("QUEUE_PREFIX", "digital_people"),
+        RedisAddr:         getenv("REDIS_ADDR", "192.168.7.29:6379"),
+        RedisPassword:     getenv("REDIS_PASSWORD", ""),
+    }
 
-	cfg.AudioTemplateDir = getenv("AUDIO_TEMPLATE_DIR", "")
-	if cfg.AudioTemplateDir == "" {
-		cfg.AudioTemplateDir = filepath.Join(cfg.HostVoiceDir, "_templates")
-	}
-	cfg.VideoTemplateDir = getenv("VIDEO_TEMPLATE_DIR", "")
-	if cfg.VideoTemplateDir == "" {
-		cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
-	}
+    // 模板目录固定
+    cfg.AudioTemplateDir = filepath.Join(cfg.HostVoiceDir, "_templates")
+    cfg.VideoTemplateDir = filepath.Join(cfg.HostVideoDir, "_templates")
 
 	// 用户配置文件（宿主机JSON）
 	cfg.UsersFile = getenv("USERS_FILE", "")
