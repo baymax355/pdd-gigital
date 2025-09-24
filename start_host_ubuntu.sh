@@ -3,9 +3,10 @@
 set -Eeuo pipefail
 
 # 用法:
-#   ./start_host_ubuntu.sh [50] [ip]
-#   - 50  : 固定叠加 docker-compose-5090.yml
-#   - ip  : 自动将上游地址设置为 127.0.0.1 (TTS/VIDEO/FUNASR)
+#   ./start_host_ubuntu.sh [50] [ip] [rebuild]
+#   - 50       : 固定叠加 docker-compose-5090.yml
+#   - ip       : 自动将上游地址设置为 127.0.0.1 (TTS/VIDEO/FUNASR)
+#   - rebuild  : 强制拉取最新镜像并重建容器
 #
 # 环境变量(可选):
 #   APP_PORT             默认为 8090
@@ -29,6 +30,7 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 GPU_PROFILE=""
 USE_LOCAL_IP=0
+FORCE_REBUILD=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -36,8 +38,10 @@ for arg in "$@"; do
       GPU_PROFILE="50" ;;
     ip|--ip)
       USE_LOCAL_IP=1 ;;
+    rebuild|--rebuild)
+      FORCE_REBUILD=1 ;;
     -h|--help)
-      echo "用法: $0 [50] [ip]"; exit 0 ;;
+      echo "用法: $0 [50] [ip] [rebuild]"; exit 0 ;;
     *) ;;
   esac
 done
@@ -127,7 +131,22 @@ echo "✅ Go Web 已启动, PID: $(cat "$ROOT_DIR/server/heygem_web.pid" 2>/dev/
 echo "🐳 启动 Docker Compose 服务..."
 (
   cd "$ROOT_DIR"
-  "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d
+  if [[ "$FORCE_REBUILD" -eq 1 ]]; then
+    echo "🔁 [rebuild] 强制拉取最新镜像并重建容器..."
+    "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" pull || true
+    "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d --force-recreate --remove-orphans
+  else
+    # 非 rebuild：若有正在运行的容器，则先停止并删除，再用本地已有镜像启动；若镜像不存在，up 会自动拉取
+    running=$("${DC_BASE[@]}" "${COMPOSE_FILES[@]}" ps -q || true)
+    if [[ -n "$running" ]]; then
+      echo "⏹️ 检测到运行中的容器，先停止..."
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" stop || true
+      echo "🗑️ 删除已停止容器..."
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" rm -f || true
+    fi
+    echo "🚀 使用本地镜像启动(若缺失将自动拉取)..."
+    "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d
+  fi
 )
 
 echo "✅ 所有服务已启动"
