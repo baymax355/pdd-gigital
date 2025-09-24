@@ -58,7 +58,7 @@ func loadConfig() Config {
 		ContainerDataRoot: getenv("GEN_VIDEO_CONTAINER_DATA_ROOT", "/code/data"),
 		// 队列/缓存保持原有默认，必要时自行修改环境变量
 		RabbitURL:     getenv("RABBITMQ_URL", "amqp://root:pddrabitmq1041@192.168.7.240:5672"),
-		QueuePrefix:   getenv("QUEUE_PREFIX", "digital_people"),
+		QueuePrefix:   getenv("QUEUE_PREFIX", "digital_people_test_2"),
 		RedisAddr:     getenv("REDIS_ADDR", "192.168.7.29:6379"),
 		RedisPassword: getenv("REDIS_PASSWORD", ""),
 	}
