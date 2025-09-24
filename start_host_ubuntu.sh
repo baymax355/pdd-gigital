@@ -99,6 +99,18 @@ fi
 
 mkdir -p "$DIGITAL_PEOPLE_DIR" "$APP_WORKDIR" "$HOST_VOICE_DIR" "$HOST_VIDEO_DIR" "$HOST_RESULT_DIR"
 
+# 前端每次重新编译
+echo "📦 前端构建 (client/) ..."
+(
+  cd "$ROOT_DIR/client"
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "⚠️ 未检测到 npm，请先安装 Node.js (建议 18+)" >&2
+  else
+    (npm ci --silent || npm install)
+    npm run build --silent
+  fi
+)
+
 # 选择 docker compose 命令
 if command -v docker &>/dev/null && docker compose version &>/dev/null; then
   DC_BASE=(docker compose)
