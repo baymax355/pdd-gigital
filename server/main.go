@@ -274,36 +274,34 @@ func handleUploadAudio(c *gin.Context) {
 		return
 	}
 
-    // 直接转换音频格式: MP3/其他格式 -> WAV (16kHz单声道)
-    work := filepath.Join(cfg.WorkDir, "audio")
-    os.MkdirAll(work, 0o755)
-    // 任务专属临时文件前缀，避免多节点/并发覆盖
-    tempSlug := fmt.Sprintf("%s_temp", sanitizeFilename(taskID))
-    srcLocal := filepath.Join(work, fmt.Sprintf("%s_src.wav", tempSlug))
-    norm := filepath.Join(work, fmt.Sprintf("%s_norm.wav", tempSlug))
 
-	// 简单的格式转换，不做任何音频处理
-	_, stderr, err := run(ctx, "ffmpeg", "-y", "-i", srcPath,
-		"-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", norm,
-	)
-	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("音频格式转换失败: %v | %s", err, stderr)})
-		return
-	}
+		// 直接转换音频格式: MP3/其他格式 -> WAV (16kHz单声道)
+		work := filepath.Join(cfg.WorkDir, "audio")
+		os.MkdirAll(work, 0o755)
+		norm := filepath.Join(work, "ref_norm.wav")
 
-    // 拷贝到 voice/data 目录（任务专属名）
-    dst := filepath.Join(cfg.HostVoiceDir, fmt.Sprintf("%s_norm.wav", tempSlug))
-	if err := copyFile(norm, dst); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
+		// 简单的格式转换，不做任何音频处理
+		_, stderr, err := run(ctx, "ffmpeg", "-y", "-i", srcPath,
+			"-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", norm,
+		)
+		if err != nil {
+			c.JSON(500, gin.H{"error": fmt.Sprintf("音频格式转换失败: %v | %s", err, stderr)})
+			return
+		}
 
-	// 也拷贝一份到视频目录，便于直接驱动视频合成（自带音频链路）
-	dstVideo := filepath.Join(cfg.HostVideoDir, "ref_norm.wav")
-	if err := copyFile(norm, dstVideo); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
+		// 拷贝到 voice/data 目录
+		dst := filepath.Join(cfg.HostVoiceDir, "ref_norm.wav")
+		if err := copyFile(norm, dst); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		// 也拷贝一份到视频目录，便于直接驱动视频合成（自带音频链路）
+		dstVideo := filepath.Join(cfg.HostVideoDir, "ref_norm.wav")
+		if err := copyFile(norm, dstVideo); err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
 
 	c.JSON(200, gin.H{
 		"src":             srcPath,
@@ -1110,13 +1108,8 @@ func parseBool(v string) bool {
 
 // 异步自动化处理函数
 func processAutomatically(ctx context.Context, taskID string, audioPath, videoPath string, req AutoProcessReq) {
-	status := getOrCreateTaskStatus(taskID)
-	if req.TaskName == "" {
-		req.TaskName = fmt.Sprintf("task-%s", taskID)
-	}
-	if status.TaskName == "" {
-		status.TaskName = req.TaskName
-	}
+    status := getOrCreateTaskStatus(taskID)
+    // 任务名称不再使用，沿用空字符串；对外统一使用 taskID
 	var body []byte
 	var url string
 	var resp *http.Response
