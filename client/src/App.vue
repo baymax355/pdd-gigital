@@ -243,79 +243,7 @@
       </div>
     </section>
 
-    <div class="flex items-center justify-between text-sm text-gray-600">
-      <span>以下步骤适合调试或手动执行单个环节，默认隐藏。</span>
-      <button type="button" class="px-3 py-1 rounded border border-gray-300 hover:bg-gray-50" @click="showManualSteps = !showManualSteps">
-        {{ showManualSteps ? '收起手动流程' : '展开手动流程' }}
-      </button>
-    </div>
-
-    <template v-if="showManualSteps">
-    <section class="bg-white p-4 rounded shadow space-y-3">
-      <h2 class="font-semibold">1) 音频上传与标准化</h2>
-      <form @submit.prevent="uploadAudio" class="flex items-center gap-3 flex-wrap">
-        <input type="file" accept="audio/*" @change="onAudioPick" class="block text-transparent file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-        <button class="px-3 py-1 bg-blue-600 text-white rounded" :disabled="!audioFile">开始处理</button>
-      </form>
-      <div v-if="audioFile" class="text-xs text-gray-500">已选文件：{{ audioFile.name }}</div>
-      <div v-if="audioResult" class="text-sm text-slate-600">
-        <div>参考音频: {{ audioResult.reference_audio }}</div>
-        <div>已拷贝: {{ audioResult.copied_to }}</div>
-      </div>
-    </section>
-
-    <section class="bg-white p-4 rounded shadow space-y-3">
-      <h2 class="font-semibold">2) 视频上传并静音</h2>
-      <form @submit.prevent="uploadVideo" class="flex items-center gap-3 flex-wrap">
-        <input type="file" accept="video/*" @change="onVideoPick" class="block text-transparent file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-        <button class="px-3 py-1 bg-blue-600 text-white rounded" :disabled="!videoFile">生成静音视频</button>
-      </form>
-      <div v-if="videoFile" class="text-xs text-gray-500">已选文件：{{ videoFile.name }}</div>
-      <div v-if="videoResult" class="text-sm text-slate-600">已生成: {{ videoResult.copied_to }}</div>
-    </section>
-
-    <section class="bg-white p-4 rounded shadow space-y-3">
-      <h2 class="font-semibold">3) 语音预处理 + TTS 合成</h2>
-      <div class="flex items-center gap-2 flex-wrap">
-        <button class="px-3 py-1 bg-emerald-600 text-white rounded" @click="preprocess">调用预处理</button>
-        <span class="text-sm text-slate-600" v-if="preResp.reference_audio_text">ASR 文本: {{ preResp.reference_audio_text }}</span>
-      </div>
-      <div class="flex items-center gap-2 flex-wrap">
-        <input class="border rounded px-2 py-1 w-64" placeholder="Speaker (默认 demo001)" v-model="speaker" />
-        <input class="border rounded px-2 py-1 flex-1" placeholder="合成文本" v-model="ttsText" />
-        <button class="px-3 py-1 bg-emerald-600 text-white rounded" @click="invokeTTS">合成 TTS</button>
-      </div>
-      <div v-if="ttsOut" class="text-sm text-slate-600">TTS 已保存并复制到视频目录: {{ ttsOut.copied_to_video_dir }}</div>
-    </section>
-
-    <section class="bg-white p-4 rounded shadow space-y-3">
-      <h2 class="font-semibold">4) 提交视频合成任务</h2>
-      <div class="flex gap-2 flex-wrap items-center">
-        <select v-model="selAudio" class="border rounded px-2 py-1">
-          <option disabled value="">选择音频(视频目录)</option>
-          <option v-for="f in files.video" :key="f" :value="f">{{ f }}</option>
-        </select>
-        <select v-model="selVideo" class="border rounded px-2 py-1">
-          <option disabled value="">选择视频(视频目录)</option>
-          <option v-for="f in files.video" :key="'v-' + f" :value="f">{{ f }}</option>
-        </select>
-        <input class="border rounded px-2 py-1" placeholder="任务 code (task001)" v-model="taskCode" />
-        <button class="px-3 py-1 bg-purple-600 text-white rounded" @click="submitVideo">提交任务</button>
-        <button class="px-3 py-1 bg-slate-700 text-white rounded" @click="refreshFiles">刷新文件</button>
-      </div>
-      <div v-if="submitResp" class="text-sm text-slate-600">已提交: {{ submitResp.upstream_status }} {{ submitResp.upstream_body }}</div>
-    </section>
-
-    <section class="bg-white p-4 rounded shadow space-y-3">
-      <h2 class="font-semibold">5) 拉取结果并复制</h2>
-      <div class="flex items-center gap-2 flex-wrap">
-        <input class="border rounded px-2 py-1" placeholder="任务 code (task001)" v-model="resultCode" />
-        <label class="inline-flex items-center gap-2"><input type="checkbox" v-model="copyToCompany" /> 复制到 /mnt/c/company</label>
-        <button class="px-3 py-1 bg-teal-600 text-white rounded" @click="fetchResult">拉取结果</button>
-      </div>
-      <div v-if="resultResp" class="text-sm text-slate-600">结果: {{ resultResp.result }} <span v-if="resultResp.copied_to_company"> => {{ resultResp.copied_to_company }}</span></div>
-    </section>
-    </template>
+    
     </template>
   </div>
 </template>
@@ -379,26 +307,13 @@ async function logout() {
   currentUser.value = ''
 }
 
-const audioFile = ref(null)
-const videoFile = ref(null)
-const trimSilence = ref(true)
-const audioResult = ref(null)
-const videoResult = ref(null)
+// 手动流程已移除
 
-const preResp = ref({})
-const speaker = ref('demo001')
-const ttsText = ref('')
-const ttsOut = ref(null)
+// 手动预处理与 TTS 相关状态已移除
 
-const files = ref({ video: [] })
-const selAudio = ref('')
-const selVideo = ref('')
-const taskCode = ref('task001')
-const submitResp = ref(null)
+// 手动视频提交相关状态已移除
 
-const resultCode = ref('task001')
-const copyToCompany = ref(false)
-const resultResp = ref(null)
+// 手动拉取与复制结果相关状态已移除
 
 // 自动化处理相关
 const DEFAULT_SPEAKER_ID = 'demo001'
@@ -410,7 +325,7 @@ const autoCopyToCompany = ref(false)
 const autoUseTTS = ref(true)
 const autoStatus = ref(null)
 const autoTaskId = ref('')
-const showManualSteps = ref(false)
+// 手动流程开关已移除
 const taskNameError = ref('')
 const nowSeconds = ref(Math.floor(Date.now() / 1000))
 const autoDurationSeconds = computed(() => {
@@ -611,8 +526,7 @@ async function retryTask(task) {
   }
 }
 
-function onAudioPick(e){ audioFile.value = e.target.files?.[0] }
-function onVideoPick(e){ videoFile.value = e.target.files?.[0] }
+// 手动文件选择已移除
 
 function onAutoAudioPick(e){
   autoAudioFile.value = e.target.files?.[0]
@@ -729,70 +643,19 @@ async function uploadVideoTemplate(){
   }
 }
 
-async function uploadAudio(){
-  const fd = new FormData()
-  fd.append('file', audioFile.value)
-  const r = await fetch('/api/upload/audio', { method: 'POST', body: fd })
-  audioResult.value = await r.json()
-}
+// 手动上传音频已移除
 
-async function uploadVideo(){
-  const fd = new FormData()
-  fd.append('file', videoFile.value)
-  const r = await fetch('/api/upload/video', { method: 'POST', body: fd })
-  videoResult.value = await r.json()
-  await refreshFiles()
-}
+// 手动上传视频已移除
 
-async function preprocess(){
-  const r = await fetch('/api/tts/preprocess', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ format: 'wav', reference_audio: 'ref_norm.wav', lang: 'zh' })
-  })
-  preResp.value = await r.json()
-}
+// 手动调用预处理已移除
 
-async function invokeTTS(){
-  const payload = {
-    speaker: speaker.value,
-    text: ttsText.value,
-    format: 'wav',
-    topP: 0.7,
-    max_new_tokens: 1024,
-    chunk_length: 100,
-    repetition_penalty: 1.2,
-    temperature: 0.7,
-    need_asr: false,
-    streaming: false,
-    is_fixed_seed: 0,
-    is_norm: 0,
-    reference_audio: preResp.value.asr_format_audio_url || '',
-    reference_text: preResp.value.reference_audio_text || ''
-  }
-  const r = await fetch('/api/tts/invoke', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-  ttsOut.value = await r.json()
-  await refreshFiles()
-}
+// 手动调用 TTS 合成已移除
 
-async function submitVideo(){
-  const payload = { audio_filename: selAudio.value, video_filename: selVideo.value, code: taskCode.value, pn: 1, chaofen: 0, watermark_switch: 0 }
-  const r = await fetch('/api/video/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-  submitResp.value = await r.json()
-}
+// 手动提交视频任务已移除
 
-async function fetchResult(){
-  const r = await fetch(`/api/video/result?code=${encodeURIComponent(resultCode.value)}&copy_to_company=${copyToCompany.value ? '1' : '0'}`)
-  resultResp.value = await r.json()
-}
+// 手动拉取合成结果已移除
 
-async function refreshFiles(){
-  const r = await fetch('/api/files?dir=video')
-  const j = await r.json()
-  files.value.video = j.files || []
-  if(!selVideo.value && files.value.video.includes('silent.mp4')) selVideo.value = 'silent.mp4'
-  if(!selAudio.value) selAudio.value = files.value.video.find(f => f.endsWith('.wav')) || ''
-}
+// 文件列表刷新（仅供手动流程使用）已移除
 
 async function fetchTemplates(){
   try {
@@ -963,7 +826,6 @@ function formatDuration(seconds) {
 onMounted(async () => {
   await fetchMe()
   if (currentUser.value) {
-    refreshFiles()
     fetchTemplates()
     refreshTasks()
     tasksTimer = setInterval(refreshTasks, 5000)
@@ -980,7 +842,6 @@ onUnmounted(() => {
 watch(currentUser, (u, prev) => {
   if (u && !prev) {
     // 初始化轮询
-    refreshFiles()
     fetchTemplates()
     refreshTasks()
     if (!tasksTimer) tasksTimer = setInterval(refreshTasks, 5000)
