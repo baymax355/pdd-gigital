@@ -10,9 +10,9 @@ ffmpeg -y -i zhuqi_16k.wav  -af "loudnorm=I=-16:TP=-1.5:LRA=11" -ar 16000 -ac 1 
 ffmpeg -y -i .\zhuqi.mp4 -an -c:v copy zhuqi_silent.mp4
 
 把对应的音频放到指定目录
-sudo cp "/mnt/c/heygem/zhuqi_xxx.wav"   /root/heygem_data/voice/data/
+sudo cp "/mnt/c/heygem/zhuqi_xxx.wav"   /mnt/windows-digitalpeople/voice/data/
 把对应的视频放到指定目录
-sudo cp "/mnt/c/heygem/zhiqi_silent.mp4"  /root/heygem_data/face2face/
+sudo cp "/mnt/c/heygem/zhiqi_silent.mp4"  /mnt/windows-digitalpeople/face2face/
 
 
 我是在wsl2 里面运行的codex，在本地使用docker-compose-linux.yml启动的服务，但是我发现里面对于视频静音、音频处理等，需要使用命令行处理完了，再放到指定▌目录，我把整个过程记录下来了，我想你使用golang+gin、vue3+tailwindCSS给我实现这些能力，我会提供给你我整个启动的操作步骤
@@ -55,11 +55,11 @@ curl -s http://127.0.0.1:18180/v1/invoke \
     "reference_audio": "/code/sessions/20250909/b1d2dad7201445b5a5721332cdc8de11/format_denoise_ref_norm_part0.wav",
     "reference_text": "风红热肿痛都得沉默，一贴到位，20 年的关节痛。风红热肿痛都得沉默，它真 的不是说吹啊，为什么满意了就不敢让你再贴了呢？它的能量有多强？我来告诉你，平时关节痛风反反复复红热肿痛，连带着这个手指疼，脚趾疼。从手。"
   }' \
-  --output /root/heygem_data/voice/data/demo001.wav
+  --output /mnt/windows-digitalpeople/voice/data/demo001.wav
 
 
 然后手动拷贝到视频目录：
-cp /root/heygem_data/voice/data/demo001.wav /root/heygem_data/face2face/
+cp /mnt/windows-digitalpeople/voice/data/demo001.wav /mnt/windows-digitalpeople/face2face/
 
 
 视频合成
@@ -79,5 +79,5 @@ docker exec -it heygem-gen-video bash
 root@081d6f3e9230:/# find /code/data -name "task001-r.mp4"
 /code/data/temp/task001-r.mp4   这里就是视频地址
 
- docker cp heygem-gen-video:/code/data/temp/task001-r.mp4 /root/heygem_data/face2face/result/
-cp /root/heygem_data/face2face/result/task001-r.mp4 /mnt/c/company/  这样就copy到company目录了
+ docker cp heygem-gen-video:/code/data/temp/task001-r.mp4 /mnt/windows-digitalpeople/face2face/result/
+cp /mnt/windows-digitalpeople/face2face/result/task001-r.mp4 /mnt/c/company/  这样就copy到company目录了

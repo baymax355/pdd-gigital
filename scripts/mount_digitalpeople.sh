@@ -22,6 +22,15 @@ sudo mount -t cifs "$SHARE_PATH" "$MOUNT_POINT" \
 
 echo "[INFO] 挂载完成"
 
+TMP_TEST_FILE="$MOUNT_POINT/.writable_check_$$"
+if ! touch "$TMP_TEST_FILE" 2>/dev/null; then
+  echo "[ERROR] 无法在 $MOUNT_POINT 写入。请检查共享盘权限或凭证 (CIFS_USER/CIFS_PASS/CIFS_VERSION)。" >&2
+  echo "[HINT] 可以手动在 Windows 端创建所需目录，或在执行脚本前修改上述环境变量。" >&2
+  sudo umount "$MOUNT_POINT" >/dev/null 2>&1 || true
+  exit 1
+fi
+rm -f "$TMP_TEST_FILE"
+
 REQUIRED_DIRS=(
   "voice/data"
   "face2face"
@@ -32,6 +41,15 @@ REQUIRED_DIRS=(
 
 for dir in "${REQUIRED_DIRS[@]}"; do
   target="$MOUNT_POINT/$dir"
+  if [[ -d "$target" ]]; then
+    echo "[INFO] 目录已存在: $target"
+    continue
+  fi
   echo "[INFO] 创建目录: $target"
-  mkdir -p "$target"
+  if ! mkdir -p "$target"; then
+    echo "[ERROR] 创建目录失败: $target" >&2
+    echo "[HINT] 请确认共享盘对用户 $CIFS_USER 可写，或手动预先创建这些目录。" >&2
+    sudo umount "$MOUNT_POINT" >/dev/null 2>&1 || true
+    exit 1
+  fi
 done

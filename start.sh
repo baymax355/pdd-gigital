@@ -40,6 +40,17 @@ echo "🚀 启动胖哒哒数字人系统 (模式: $MODE) ..."
 export COMPANY_DIR="${COMPANY_DIR:-./company}"
 mkdir -p "$COMPANY_DIR"
 
+# 默认共享盘路径保持与 heygem-tts 一致，避免不同容器访问到不同目录
+export DIGITAL_PEOPLE_DIR="${DIGITAL_PEOPLE_DIR:-/mnt/windows-digitalpeople}"
+export APP_WORKDIR="${APP_WORKDIR:-$DIGITAL_PEOPLE_DIR/workdir}"
+export HOST_VOICE_DIR="${HOST_VOICE_DIR:-$DIGITAL_PEOPLE_DIR/voice/data}"
+export HOST_VIDEO_DIR="${HOST_VIDEO_DIR:-$DIGITAL_PEOPLE_DIR/face2face}"
+export HOST_RESULT_DIR="${HOST_RESULT_DIR:-$DIGITAL_PEOPLE_DIR/face2face/result}"
+export WIN_COMPANY_DIR="${WIN_COMPANY_DIR:-$DIGITAL_PEOPLE_DIR}"
+
+mkdir -p "$DIGITAL_PEOPLE_DIR"
+mkdir -p "$HOST_VOICE_DIR" "$HOST_VIDEO_DIR" "$HOST_RESULT_DIR"
+
 # 构建前端
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   echo "📦 构建前端..."

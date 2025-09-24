@@ -2,8 +2,8 @@
 
 基于 heygem.txt 的手工流程，封装成后端 API 与前端页面，自动执行：
 
-- 音频上传 -> 去静音(可选) -> 响度归一化(16k/PCM16) -> 拷贝至 `/root/heygem_data/voice/data/ref_norm.wav`
-- 视频上传 -> 直通转封装静音 -> 拷贝至 `/root/heygem_data/face2face/silent.mp4`
+- 音频上传 -> 去静音(可选) -> 响度归一化(16k/PCM16) -> 拷贝至 `/mnt/windows-digitalpeople/voice/data/ref_norm.wav`
+- 视频上传 -> 直通转封装静音 -> 拷贝至 `/mnt/windows-digitalpeople/face2face/silent.mp4`
 - 调用 TTS 预处理与合成 -> 保存 `speaker.wav` 至 voice/data 并复制到视频目录（或使用直通转发端点）
 - 提交视频合成任务到 `http://127.0.0.1:8383/easy/submit`
 - 拉取合成结果（通过 `docker cp` 从 `heygem-gen-video` 导出），落地到共享盘（如 `/mnt/windows-digitalpeople`）并自动清理宿主机/容器内的临时视频

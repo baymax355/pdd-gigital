@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
   shift
-end
+done
 
 if [[ "$DO_MOUNT" -eq 1 ]]; then
   if mountpoint -q "$MOUNT_POINT"; then
