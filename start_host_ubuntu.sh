@@ -116,12 +116,29 @@ if [[ -n "$GPU_PROFILE" ]]; then
   fi
 fi
 
-# 启动 Go Web (后台)
-echo "🌐 启动 Go Web (端口 :$APP_PORT) ..."
+# 编译并启动 Go Web (后台)
+echo "🌐 编译并启动 Go Web (端口 :$APP_PORT) ..."
 (
   cd "$ROOT_DIR/server"
-  # 如需将日志输出到文件, 可改为: nohup go run . >> server.log 2>&1 &
-  nohup go run . >> server.log 2>&1 &
+  # 若存在旧进程, 先优雅停止
+  if [[ -f heygem_web.pid ]]; then
+    oldpid=$(cat heygem_web.pid || true)
+    if [[ -n "$oldpid" ]] && kill -0 "$oldpid" 2>/dev/null; then
+      echo "⏹️ 停止旧进程 PID=$oldpid ..."
+      kill "$oldpid" || true
+      sleep 1
+    fi
+    rm -f heygem_web.pid || true
+  fi
+  mkdir -p bin
+  echo "🛠️  编译中..."
+  CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/heygem-web .
+  # 若存在前端构建目录, 显式设置 STATIC_DIR 以便托管静态资源
+  if [[ -d "$ROOT_DIR/client/dist" ]]; then
+    export STATIC_DIR="$ROOT_DIR/client/dist"
+  fi
+  echo "🚀 后台运行二进制: bin/heygem-web"
+  nohup ./bin/heygem-web >> server.log 2>&1 &
   echo $! > heygem_web.pid
 )
 sleep 1
