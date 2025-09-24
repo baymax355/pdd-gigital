@@ -842,17 +842,8 @@ func handleAutoProcess(c *gin.Context) {
 		req.UseTTS = parseBool(v)
 	}
 
-	rawTaskName := strings.TrimSpace(c.PostForm("task_name"))
-	if rawTaskName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写任务名称"})
-		return
-	}
-	taskName := sanitizeTaskName(rawTaskName)
-	if taskName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "任务名称包含非法字符，请重新输入"})
-		return
-	}
-	req.TaskName = taskName
+    // 不再需要任务名称，统一使用任务ID标识本次任务
+    req.TaskName = ""
 
 	var (
 		audioFile *multipart.FileHeader
@@ -895,15 +886,15 @@ func handleAutoProcess(c *gin.Context) {
     log.Printf("解析的请求参数: TaskName=%s, Speaker=%s, TextLen=%d, CopyToCompany=%v, UseTTS=%v, AudioTemplate=%s, VideoTemplate=%s", req.TaskName, req.Speaker, len([]rune(req.Text)), req.CopyToCompany, req.UseTTS, req.AudioTemplateName, req.VideoTemplateName)
 
 	taskID := nextAutoTaskID()
-	status := &AutoProcessStatus{
-		TaskID:      taskID,
-		TaskName:    req.TaskName,
-		Username:    loginUser,
-		Status:      "processing",
-		CurrentStep: "上传文件",
-		Progress:    0,
-		StartTime:   time.Now().Unix(),
-	}
+    status := &AutoProcessStatus{
+        TaskID:      taskID,
+        TaskName:    "",
+        Username:    loginUser,
+        Status:      "processing",
+        CurrentStep: "上传文件",
+        Progress:    0,
+        StartTime:   time.Now().Unix(),
+    }
 	status.Request = &req
 	taskStatusMu.Lock()
 	taskStatusMap[taskID] = status
@@ -964,7 +955,7 @@ func handleAutoProcess(c *gin.Context) {
     }
     log.Printf("任务已入队: task_id=%s, audio=%s, video=%s, use_tts=%v", taskID, audioPath, videoPath, req.UseTTS)
 
-	c.JSON(200, gin.H{"task_id": taskID, "status": "started", "task_name": req.TaskName})
+    c.JSON(200, gin.H{"task_id": taskID, "status": "started"})
 }
 
 func handleUploadAudioTemplate(c *gin.Context) {
@@ -1461,13 +1452,10 @@ func processAutomatically(ctx context.Context, taskID string, audioPath, videoPa
 	status.Progress = 70
 	persistTaskStatus(status)
 
-	taskCode := req.TaskName
-	if taskCode == "" {
-		taskCode = fmt.Sprintf("task-%s", taskID)
-	}
-	status.TaskName = taskCode
-	containerResultName := fmt.Sprintf("%s-r.mp4", taskCode)
-	resultFilename := fmt.Sprintf("%s.mp4", taskCode)
+    // 统一使用任务ID作为视频生成 code 与最终结果文件名
+    taskCode := taskID
+    containerResultName := fmt.Sprintf("%s-r.mp4", taskCode)
+    resultFilename := fmt.Sprintf("%s.mp4", taskID)
 	containerResultPath := filepath.Join(cfg.ContainerDataRoot, "temp", containerResultName)
 	hostTempVideoPath := filepath.Join(cfg.HostVideoDir, "temp", containerResultName)
 	addCleanupPath(hostTempVideoPath)
