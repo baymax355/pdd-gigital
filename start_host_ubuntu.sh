@@ -128,24 +128,53 @@ sleep 1
 echo "✅ Go Web 已启动, PID: $(cat "$ROOT_DIR/server/heygem_web.pid" 2>/dev/null || echo -n '?')"
 
 # 启动 docker compose
-echo "🐳 启动 Docker Compose 服务..."
+echo "🐳 启动 Docker Compose 服务(仅依赖: heygem-tts/heygem-asr/heygem-gen-video，不启动 heygem-web)..."
 (
   cd "$ROOT_DIR"
+  # 解析可用服务，筛选我们关心的依赖服务，避免启动 heygem-web
+  mapfile -t ALL_SERVICES < <("${DC_BASE[@]}" "${COMPOSE_FILES[@]}" config --services | sed 's/^\s*//;s/\s*$//')
+  TARGET_SERVICES=()
+  for s in heygem-tts heygem-asr heygem-gen-video; do
+    for a in "${ALL_SERVICES[@]}"; do
+      if [[ "$a" == "$s" ]]; then TARGET_SERVICES+=("$s"); break; fi
+    done
+  done
+  if [[ ${#TARGET_SERVICES[@]} -eq 0 ]]; then
+    echo "⚠️ 未从 compose 中解析到依赖服务，回退为启动全部(可能会包含 heygem-web)";
+  fi
+
   if [[ "$FORCE_REBUILD" -eq 1 ]]; then
     echo "🔁 [rebuild] 强制拉取最新镜像并重建容器..."
-    "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" pull || true
-    "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d --force-recreate --remove-orphans
-  else
-    # 非 rebuild：若有正在运行的容器，则先停止并删除，再用本地已有镜像启动；若镜像不存在，up 会自动拉取
-    running=$("${DC_BASE[@]}" "${COMPOSE_FILES[@]}" ps -q || true)
-    if [[ -n "$running" ]]; then
-      echo "⏹️ 检测到运行中的容器，先停止..."
-      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" stop || true
-      echo "🗑️ 删除已停止容器..."
-      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" rm -f || true
+    if [[ ${#TARGET_SERVICES[@]} -gt 0 ]]; then
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" pull "${TARGET_SERVICES[@]}" || true
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d --force-recreate --remove-orphans "${TARGET_SERVICES[@]}"
+    else
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" pull || true
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d --force-recreate --remove-orphans
     fi
-    echo "🚀 使用本地镜像启动(若缺失将自动拉取)..."
-    "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d
+  else
+    # 非 rebuild：若有运行容器，先停止并删除，只针对依赖服务
+    if [[ ${#TARGET_SERVICES[@]} -gt 0 ]]; then
+      running=$("${DC_BASE[@]}" "${COMPOSE_FILES[@]}" ps -q "${TARGET_SERVICES[@]}" || true)
+      if [[ -n "$running" ]]; then
+        echo "⏹️ 检测到运行中的依赖容器，先停止..."
+        "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" stop "${TARGET_SERVICES[@]}" || true
+        echo "🗑️ 删除已停止依赖容器..."
+        "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" rm -f "${TARGET_SERVICES[@]}" || true
+      fi
+      echo "🚀 使用本地镜像启动依赖(若缺失将自动拉取)..."
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d "${TARGET_SERVICES[@]}"
+    else
+      running=$("${DC_BASE[@]}" "${COMPOSE_FILES[@]}" ps -q || true)
+      if [[ -n "$running" ]]; then
+        echo "⏹️ 检测到运行中的容器，先停止..."
+        "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" stop || true
+        echo "🗑️ 删除已停止容器..."
+        "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" rm -f || true
+      fi
+      echo "🚀 回退: 启动全部服务"
+      "${DC_BASE[@]}" "${COMPOSE_FILES[@]}" up -d
+    fi
   fi
 )
 
