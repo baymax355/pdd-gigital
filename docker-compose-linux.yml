@@ -32,6 +32,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
       - NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility,video,display
+      - FUNASR_BASE_URL=${FUNASR_BASE_URL:-http://heygem-asr:10095}
     ports:
       - '18180:8080'
     volumes:

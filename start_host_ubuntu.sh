@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 # 用法:
 #   ./start_host_ubuntu.sh [50]
-#   - 传入参数 50 时, 额外叠加 GPU Compose 文件 (优先 docker-compose-6090.yml, 不存在则使用 docker-compose-5090.yml)
+#   - 传入参数 50 时, 固定叠加 docker-compose-5090.yml
 #
 # 环境变量(可选):
 #   APP_PORT             默认为 8090
@@ -48,14 +48,11 @@ fi
 
 COMPOSE_FILES=("-f" "docker-compose-linux.yml")
 if [[ -n "$GPU_PROFILE" ]]; then
-  if [[ -f "$ROOT_DIR/docker-compose-6090.yml" ]]; then
-    COMPOSE_FILES+=("-f" "docker-compose-6090.yml")
-    echo "🧩 使用 docker-compose-6090.yml(存在) 叠加"
-  elif [[ -f "$ROOT_DIR/docker-compose-5090.yml" ]]; then
+  if [[ -f "$ROOT_DIR/docker-compose-5090.yml" ]]; then
     COMPOSE_FILES+=("-f" "docker-compose-5090.yml")
-    echo "🧩 使用 docker-compose-5090.yml(回退) 叠加"
+    echo "🧩 使用 docker-compose-5090.yml 叠加"
   else
-    echo "⚠️ 未找到 6090/5090 的 docker-compose 叠加文件, 仅使用 docker-compose-linux.yml"
+    echo "⚠️ 未找到 docker-compose-5090.yml, 仅使用 docker-compose-linux.yml"
   fi
 fi
 
